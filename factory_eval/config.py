@@ -47,7 +47,7 @@ def load_config(path, root):
     if set(c["work_repositories"]) != set(c["tasks"]):
         raise Invalid("each selected task needs its own initial SHA and work repository")
     for tid in c["tasks"]:
-        if tid not in ("E01", "E02", "E03", "E04"):
+        if tid not in ("E01", "E02", "E03", "E04", "E05"):
             raise Invalid("unknown task ID")
         Task.load(Path(root) / "tasks" / tid)
         work = c["work_repositories"][tid]
