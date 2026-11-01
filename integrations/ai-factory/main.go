@@ -247,6 +247,21 @@ func safeError(e error) string {
 	}
 	return "core_error"
 }
+func snapshotChanges(ctx context.Context, writer *guard, i *domain.Implementation) []map[string]any {
+	changes := []map[string]any{}
+	if writer == nil || i == nil {
+		return changes
+	}
+	for _, s := range i.Changes {
+		f, ok := writer.GetChange(ctx, i.CacheID, i.Version, s.Path)
+		if ok {
+			hash := sha256.Sum256([]byte(f.Content))
+			changes = append(changes, map[string]any{"path": f.Path, "action": f.Action, "content": f.Content, "sha256": hex.EncodeToString(hash[:]), "base_commit": i.BaseCommit})
+		}
+	}
+	return changes
+}
+
 func main() {
 	input.Buffer(make([]byte, 65536), 4*1024*1024)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -381,21 +396,11 @@ func main() {
 				state.Summary = cp.Summary
 				state.Sources = cp.Sources
 				state.Limitations = cp.Limitations
-				emit("checkpoint", map[string]any{"checkpoint": cp})
+				emit("checkpoint", map[string]any{"checkpoint": cp, "changes": snapshotChanges(ctx, writer, cp.Implementation)})
 				return nil
 			})
 		}
-		changes := []map[string]any{}
-		if writer != nil && state.Implementation != nil {
-			i := state.Implementation
-			for _, s := range i.Changes {
-				f, ok := writer.GetChange(ctx, i.CacheID, i.Version, s.Path)
-				if ok {
-					hash := sha256.Sum256([]byte(f.Content))
-					changes = append(changes, map[string]any{"path": f.Path, "action": f.Action, "content": f.Content, "sha256": hex.EncodeToString(hash[:]), "base_commit": i.BaseCommit})
-				}
-			}
-		}
+		changes := snapshotChanges(ctx, writer, state.Implementation)
 		emit("result", map[string]any{"error": safeError(err), "implementation": state.Implementation, "changes": changes, "metrics": latest.Metrics})
 	}
 	if err := input.Err(); err != nil {

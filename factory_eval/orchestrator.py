@@ -152,12 +152,16 @@ class Evaluation:
             impl = value.get("checkpoint", {}).get("Implementation") or {}
             if impl.get("pullNumber"):
                 record["pull_number"], record["branch"], record["commit"] = impl["pullNumber"], impl["branch"], impl["commit"]
+            elif impl.get("refBranch"):
+                record["branch"], record["commit"], record["branch_created"] = impl["refBranch"], impl.get("commit", ""), True
             if impl:
                 rounds = record.setdefault("static_repair_rounds", {})
                 key = str(impl.get("version", 0))
                 rounds[key] = max(rounds.get(key, 0), impl.get("repairRound", 0))
                 record["static_repairs"] = sum(rounds.values())
                 write_json(directory / "checkpoint.json", value["checkpoint"], self.secrets)
+                if value.get("changes"):
+                    write_json(directory / "changes" / "checkpoint.json", value["changes"], self.secrets)
             with (directory / "events.jsonl").open("a") as f:
                 f.write(redact(json.dumps({"at": now(), **value}, ensure_ascii=False), self.secrets) + "\n")
         adapter = None
@@ -253,7 +257,7 @@ class Evaluation:
             if adapter:
                 adapter.close()
             # No new writes after cancellation. Cleanup remains explicitly tracked.
-            record["cleanup_pending"] = bool(record.get("pull_number"))
+            record["cleanup_pending"] = bool(record.get("pull_number") or record.get("branch_created"))
             if c["cleanup"] and record.get("pull_number") and not self.total.cancelled:
                 try:
                     self.total.check()

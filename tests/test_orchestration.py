@@ -72,6 +72,20 @@ class OrchestrationTests(unittest.TestCase):
   self.assertEqual(FakeAdapter.calls.count('fix_ci'),1)
   self.assertEqual([x[0]for x in self.e.work_api.mutations],['POST','POST','cleanup'])
   self.assertEqual(metrics([r])['false_completion']['count'],1)
+ def test_stop_preserves_partial_changes_and_branch_without_pr(self):
+  self.e.grade=self.grader
+  class PartialAdapter(FakeAdapter):
+   def __init__(self,binary,env,trial,total,event):
+    super().__init__(binary,env,trial,total,event);self.event=event
+   def call(self,action,**kw):
+    if action=='publish':
+     self.event({'type':'checkpoint','checkpoint':{'Implementation':{'status':'publishing','refBranch':'ai-factory/eval-owned-work','commit':'a'*40}},'changes':[{'path':'language.go','action':'update','content':'partial'}]})
+     raise BudgetExceeded('stopped after branch creation')
+    return super().call(action,**kw)
+  with patch('factory_eval.orchestrator.Adapter',PartialAdapter):r=self.e.run_one(Task.load(ROOT/'tasks/E01'),0,'baseline','b'*40,'fake')
+  self.assertEqual(r['status'],'budget_exceeded');self.assertTrue(r['cleanup_pending'])
+  self.assertTrue((self.e.destination/r['run_id']/'changes/checkpoint.json').exists())
+  self.assertEqual(self.e.work_api.mutations,[])
  def test_preflight_error_keeps_every_planned_trial(self):
   with patch.object(self.e,'preflight',side_effect=Invalid('credentials unavailable')):
    runs=self.e.run()
