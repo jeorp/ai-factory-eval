@@ -22,6 +22,7 @@
 | reserve | 物理モデルHTTPリクエスト直前のreservation_id・入力上界・最大出力。親の `{"allow": true}` が必要 |
 | write_intent | GitHubの各書き込み直前。親の停止・時間上限確認後の承認が必要 |
 | usage | プロバイダーから得た実トークン数、usage_known、usage_id。正常な単一リクエストのみsettle=trueとreservation_idを付与して差額精算する。エラー・複数試行・識別子欠落は精算しない |
+| core_diagnostic | 本体バリデーターが拒否した固定の理由コード・フェーズ・操作有無。モデル本文や生ログは渡さない |
 | checkpoint | 本体Runnerが発行したチェックポイント、計画、AIの受け入れ条件、未確認事項 |
 | result | implementation、生成changes、metrics、サニタイズされたerrorコード |
 

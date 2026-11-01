@@ -12,7 +12,7 @@ import tempfile
 import time
 
 from . import PROTOCOL_VERSION
-from .util import Invalid, Blocked, BudgetExceeded, command, clean_env, sha
+from .util import Invalid, Blocked, BudgetExceeded, ImplementationFailed, command, clean_env, sha
 
 
 def build_core(source, commit, integration, destination):
@@ -131,7 +131,7 @@ class Adapter:
                     raise failures[0]
                 if uid is not None:
                     self.usage_events[uid] = r
-            elif kind == "checkpoint":
+            elif kind in ("checkpoint", "core_diagnostic"):
                 self.event(r)
             elif kind == "write_intent":
                 self.trial.check()
@@ -140,6 +140,8 @@ class Adapter:
                 self.event({"type": "github_write_authorized"})
             elif kind == "result":
                 if r.get("error"):
+                    if r["error"] == "invalid_implementation_result":
+                        raise ImplementationFailed("core exhausted structured-output correction retries")
                     if r["error"] in ("scope_rejected", "clarification_required", "ci_capability_unavailable", "credential_echo_blocked") or r["error"].startswith(("implementation_", "invalid_plan")):
                         raise Blocked(r["error"])
                     raise Invalid("headless core: " + r["error"])

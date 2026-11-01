@@ -36,6 +36,37 @@ func emit(kind string, fields map[string]any) {
 	_ = output.Encode(fields)
 }
 
+// Forward only the production validator's fixed classifications, never model
+// text, request bodies or arbitrary log messages. This keeps failed generations
+// diagnosable without exposing credentials or changing the provider/Runner.
+type diagnosticWriter struct{}
+
+func (diagnosticWriter) Write(raw []byte) (int, error) {
+	var row map[string]any
+	if json.Unmarshal(raw, &row) != nil || row["msg"] != "implement_response_rejected" {
+		return len(raw), nil
+	}
+	fields := map[string]any{"event": "implement_response_rejected"}
+	reason, _ := row["reason"].(string)
+	// implementationResultReason is already a fixed allowlist inside the core.
+	if reason == "" || len(reason) > 64 || !errorCode.MatchString(reason) {
+		reason = "unknown"
+	}
+	fields["reason"] = reason
+	phase, _ := row["phase"].(string)
+	switch phase {
+	case "plan", "edit", "verify":
+		fields["phase"] = phase
+	}
+	for _, key := range []string{"has_read", "has_search", "has_plan", "has_implementation", "has_verification", "has_start_implementation", "has_start_review", "has_review"} {
+		if value, ok := row[key].(bool); ok {
+			fields[key] = value
+		}
+	}
+	emit("core_diagnostic", fields)
+	return len(raw), nil
+}
+
 type memory map[string]string
 
 func (m memory) Get(_ context.Context, k string) (string, bool) { v, ok := m[k]; return v, ok }
@@ -293,7 +324,7 @@ func snapshotChanges(ctx context.Context, writer *guard, i *domain.Implementatio
 
 func main() {
 	input.Buffer(make([]byte, 65536), 4*1024*1024)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewJSONHandler(diagnosticWriter{}, nil))
 	slog.SetDefault(logger)
 	var runner *agent.Runner
 	var state domain.Session

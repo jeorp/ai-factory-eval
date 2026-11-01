@@ -148,3 +148,23 @@ func TestUsageSettlementAttribution(t *testing.T) {
 		})
 	}
 }
+
+func TestDiagnosticsForwardOnlyValidatorClassifications(t *testing.T) {
+	b := resetIO("")
+	w := diagnosticWriter{}
+	_, _ = w.Write([]byte(`{"msg":"arbitrary log containing a credential","reason":"ignore-me"}`))
+	if b.Len() != 0 {
+		t.Fatal("arbitrary log forwarded")
+	}
+	_, _ = w.Write([]byte(`{"msg":"implement_response_rejected","reason":"plan_action_conflict","phase":"plan","has_read":true,"answer":"secret-model-text","request":"secret-request","key":"secret-key"}`))
+	var row map[string]any
+	if e := json.Unmarshal(b.Bytes(), &row); e != nil {
+		t.Fatal(e)
+	}
+	if row["type"] != "core_diagnostic" || row["reason"] != "plan_action_conflict" || row["has_read"] != true {
+		t.Fatal("classification missing")
+	}
+	if strings.Contains(b.String(), "secret-") {
+		t.Fatal("arbitrary fields leaked")
+	}
+}

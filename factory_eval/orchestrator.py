@@ -151,7 +151,13 @@ class Evaluation:
         def event(value):
             impl = value.get("checkpoint", {}).get("Implementation") or {}
             if impl.get("pullNumber"):
-                record["pull_number"], record["branch"], record["commit"] = impl["pullNumber"], impl["branch"], impl["commit"]
+                record["pull_number"] = impl["pullNumber"]
+                # A CI repair draft retains its PR number but omits publication
+                # fields until the PR is read. Preserve the last owned identity.
+                if impl.get("branch"):
+                    record["branch"] = impl["branch"]
+                if impl.get("commit"):
+                    record["commit"] = impl["commit"]
             elif impl.get("refBranch"):
                 record["branch"], record["commit"], record["branch_created"] = impl["refBranch"], impl.get("commit", ""), True
             if impl:
@@ -230,7 +236,13 @@ class Evaluation:
                 (directory / "changes" / f"attempt-{attempt}.patch").write_text(redact("".join(patches), self.secrets))
                 result = adapter.call("publish")
                 impl = result["implementation"]
-                record["pull_number"], record["branch"], record["commit"] = impl["pullNumber"], impl["branch"], impl["commit"]
+                record["pull_number"] = impl["pullNumber"]
+                # A CI repair draft retains its PR number but omits publication
+                # fields until the PR is read. Preserve the last owned identity.
+                if impl.get("branch"):
+                    record["branch"] = impl["branch"]
+                if impl.get("commit"):
+                    record["commit"] = impl["commit"]
                 graded = self.grade(task, record, impl["commit"], base, trial, trace=trace)
                 graded["claimed_complete"] = record["completed"]
                 record["attempts"].append(graded)

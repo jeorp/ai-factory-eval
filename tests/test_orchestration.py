@@ -97,4 +97,28 @@ class OrchestrationTests(unittest.TestCase):
   with patch('factory_eval.orchestrator.Adapter',FakeAdapter):r=self.e.run_one(Task.load(ROOT/'tasks/E01'),0,'candidate','c'*40,'fake')
   self.assertEqual(r['status'],'budget_exceeded');self.assertEqual(self.e.work_api.mutations,[])
 
+
+ def test_ci_repair_checkpoint_may_omit_publication_fields(self):
+  def grade(task,record,commit,base,trial,phase='implementation',trace=None):
+   g=self.grader(task,record,commit,base,trial,phase,trace)
+   if phase=='implementation' and not record['attempts']:g['grading']['status']='implementation_failed'
+   return g
+  self.e.grade=grade
+  class RepairCheckpointAdapter(FakeAdapter):
+   def __init__(self,binary,env,trial,total,event):
+    super().__init__(binary,env,trial,total,event);self.event=event
+   def call(self,action,**kw):
+    if action=='fix_ci':
+     # StartCIFix/NextImplementation retains PullNumber while a new draft
+     # intentionally omits publication-only branch and commit fields.
+     self.event({'type':'checkpoint','checkpoint':{'Implementation':{'status':'planning','pullNumber':1,'version':1}}})
+    return super().call(action,**kw)
+  with patch('factory_eval.orchestrator.Adapter',RepairCheckpointAdapter):r=self.e.run_one(Task.load(ROOT/'tasks/E01'),0,'baseline','b'*40,'fake')
+  self.assertEqual(r['status'],'passed',r.get('reason'))
+  self.assertEqual(len(r['attempts']),2)
+  self.assertEqual(FakeAdapter.calls.count('fix_ci'),1)
+  self.assertEqual(r['branch'],'ai-factory/eval-test-work')
+  self.assertEqual(r['commit'],'a'*40)
+  self.assertFalse(r['cleanup_pending'])
+
 if __name__=='__main__':unittest.main()
