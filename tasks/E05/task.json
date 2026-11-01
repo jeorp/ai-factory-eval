@@ -1,0 +1,102 @@
+{
+  "id": "E05",
+  "version": 1,
+  "purpose": "送金バッチの原子性、重複ID排除、順序どおりの適用を実装する。",
+  "requests": [
+    "Ledger.ApplyBatchを修正してください。バッチ内の送金は順序どおり反映し、全件が有効な場合だけBalancesとSeenを更新してください。1件でも不正・残高不足・処理済みIDの再利用・バッチ内ID重複があればエラーを返し、元の台帳を変えないでください。同一口座間の送金も不正です。既存の成功時の動作と公開APIは維持してください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "grading/*"
+  ],
+  "max_files": 4,
+  "max_bytes": 20000,
+  "requirements": [
+    {
+      "id": "E05-R01",
+      "description": "TestAtomicRollback",
+      "tests": [
+        "TestAtomicRollback"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E05-R02",
+      "description": "TestDuplicateReplay",
+      "tests": [
+        "TestDuplicateReplay"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E05-R03",
+      "description": "TestOrderedTransfer",
+      "tests": [
+        "TestOrderedTransfer"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E05-R04",
+      "description": "TestInvalidTransfer",
+      "tests": [
+        "TestInvalidTransfer"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E05-R01": false,
+    "E05-R02": false,
+    "E05-R03": true,
+    "E05-R04": false
+  },
+  "reference": {
+    "E05-R01": true,
+    "E05-R02": true,
+    "E05-R03": true,
+    "E05-R04": true
+  },
+  "mutations": [
+    {
+      "name": "no-rollback",
+      "file": "ledger.go",
+      "old": "balances := make(map[string]int, len(l.Balances))",
+      "new": "balances := l.Balances",
+      "detect": [
+        "E05-R01"
+      ]
+    },
+    {
+      "name": "accept-replay",
+      "file": "ledger.go",
+      "old": "if seen[t.ID] { return errors.New(\"duplicate transfer\") }",
+      "new": "if false { return errors.New(\"duplicate transfer\") }",
+      "detect": [
+        "E05-R02"
+      ]
+    },
+    {
+      "name": "reject-all",
+      "file": "ledger.go",
+      "old": "l.Balances, l.Seen = balances, seen",
+      "new": "return errors.New(\"blocked\")\n    l.Balances, l.Seen = balances, seen",
+      "detect": [
+        "E05-R03"
+      ]
+    }
+  ]
+}
