@@ -27,7 +27,7 @@ def main(argv=None):
     build.add_argument('--sha', required=True)
     build.add_argument('--output', required=True)
     export = sub.add_parser('export-task', help='export only public initial code for a dedicated work repository')
-    export.add_argument('task', choices=['E01','E02','E03','E04','E05'])
+    export.add_argument('task', choices=['E01','E02','E03','E04','E05','E06','E07','E10'])
     export.add_argument('--output', required=True)
     run = sub.add_parser('run', help='paid live evaluation with real GitHub, explicit credentials and all limits')
     run.add_argument('--config', required=True)

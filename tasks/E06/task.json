@@ -1,0 +1,139 @@
+{
+  "id": "E06",
+  "version": 2,
+  "purpose": "注文の二重計上を呼び出し経路から調査し、正常系を維持して修正する。",
+  "requests": [
+    "割引を使う注文で、商品合計が二重に計上されることがあります。注文処理の呼び出し経路を調査して修正し、割引なしや空注文の既存動作も維持してください。Totalは商品価格の総和からDiscountを一度だけ引いた整数を返し、入力のOrderやPricesを変更しないでください。価格と割引は非負、割引は商品合計以下で、合計や計算結果はintの範囲内です。公開APIは維持してください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "grading/*"
+  ],
+  "max_files": 4,
+  "max_bytes": 20000,
+  "requirements": [
+    {
+      "id": "E06-R01",
+      "description": "商品合計から割引を一度だけ適用する",
+      "tests": [
+        "TestDiscountedTotal"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E06-R02",
+      "description": "割引なし・ゼロ価格・空注文の合計を維持する",
+      "tests": [
+        "TestNoDiscount"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E06-R03",
+      "description": "全額割引とint範囲内の大きい金額を正しく扱う",
+      "tests": [
+        "TestBoundaryTotals"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E06-R04",
+      "description": "入力を変更せず繰り返し呼び出しで同じ結果を返す",
+      "tests": [
+        "TestOrderInputPreserved"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E06-R05",
+      "description": "固定シードの200注文で独立した計算式・分割・順序不変性を満たす",
+      "tests": [
+        "TestTotalProperties"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E06-R01": false,
+    "E06-R02": true,
+    "E06-R03": false,
+    "E06-R04": true,
+    "E06-R05": false
+  },
+  "reference": {
+    "E06-R01": true,
+    "E06-R02": true,
+    "E06-R03": true,
+    "E06-R04": true,
+    "E06-R05": true
+  },
+  "mutations": [
+    {
+      "name": "double-count",
+      "file": "order.go",
+      "old": "discounted(total, o.Discount)",
+      "new": "discounted(total+subtotal(o.Prices), o.Discount)",
+      "detect": [
+        "E06-R01"
+      ]
+    },
+    {
+      "name": "drop-discount",
+      "file": "order.go",
+      "old": "discounted(total, o.Discount)",
+      "new": "discounted(total, 0)",
+      "detect": [
+        "E06-R01"
+      ]
+    },
+    {
+      "name": "break-no-discount",
+      "file": "order.go",
+      "old": "return total\n",
+      "new": "return total/2\n",
+      "detect": [
+        "E06-R02"
+      ]
+    },
+    {
+      "name": "truncate-int32",
+      "file": "order.go",
+      "old": "total:=subtotal(o.Prices)",
+      "new": "total:=int(int32(subtotal(o.Prices)))",
+      "detect": [
+        "E06-R03"
+      ]
+    },
+    {
+      "name": "mutate-input",
+      "file": "order.go",
+      "old": "total:=subtotal(o.Prices)",
+      "new": "total:=subtotal(o.Prices); if len(o.Prices)>0 {o.Prices[0]=0}",
+      "detect": [
+        "E06-R04"
+      ]
+    },
+    {
+      "name": "cap-subtotal",
+      "file": "order.go",
+      "old": "return total-discount",
+      "new": "if total>100 {return 100-discount}; return total-discount",
+      "detect": [
+        "E06-R05"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "id": "E10",
+  "version": 1,
+  "purpose": "固定ベースからの別々の編集を統合し、同じ箇所の競合を拒否する。",
+  "requests": [
+    "Mergeを修正してください。baseからのlocalとremoteの変更を統合し、別々の項目の変更は両方保持してください。同じ項目が異なる値に変更された場合はエラーを返し、空の結果を返してください。同じ値への変更は競合ではありません。各入力は同じキーを持つmapで、入力mapを変更しないでください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "grading/*"
+  ],
+  "max_files": 4,
+  "max_bytes": 20000,
+  "requirements": [
+    {
+      "id": "E10-R01",
+      "description": "TestIndependentChanges",
+      "tests": [
+        "TestIndependentChanges"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E10-R02",
+      "description": "TestConflict",
+      "tests": [
+        "TestConflict"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E10-R03",
+      "description": "TestIdenticalChange",
+      "tests": [
+        "TestIdenticalChange"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E10-R01": false,
+    "E10-R02": false,
+    "E10-R03": true
+  },
+  "reference": {
+    "E10-R01": true,
+    "E10-R02": true,
+    "E10-R03": true
+  },
+  "mutations": [
+    {
+      "name": "discard-remote",
+      "file": "merge.go",
+      "old": "if l!=b { result[k]=l } else { result[k]=r }",
+      "new": "result[k]=l",
+      "detect": [
+        "E10-R01"
+      ]
+    },
+    {
+      "name": "ignore-conflict",
+      "file": "merge.go",
+      "old": "if l!=b && r!=b && l!=r { return nil,errors.New(\"conflict\") }",
+      "new": "if false { return nil,errors.New(\"conflict\") }",
+      "detect": [
+        "E10-R02"
+      ]
+    }
+  ]
+}

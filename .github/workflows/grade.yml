@@ -21,7 +21,7 @@ on:
       task_id:
         required: true
         type: choice
-        options: [E01, E02, E03, E04, E05]
+        options: [E01, E02, E03, E04, E05, E06, E07, E10]
       trace:
         required: true
         type: string
@@ -68,7 +68,7 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           ref: ${{ inputs.head_sha }}
-          token: ${{ inputs.task_id == 'E05' && github.token || secrets.EVAL_READ_TOKEN }}
+          token: ${{ contains(fromJSON('["E05","E06","E07"]'), inputs.task_id) && github.token || secrets.EVAL_READ_TOKEN }}
           path: candidate
           persist-credentials: false
           submodules: false

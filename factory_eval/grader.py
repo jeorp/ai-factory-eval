@@ -51,7 +51,8 @@ def prepare(task, candidate, destination):
 
 def run(args, cwd):
     env = clean_env()
-    env.update({"GOTOOLCHAIN": "local", "GOPROXY": "off", "GOSUMDB": "off", "CGO_ENABLED": "0"})
+    env.update({"GOTOOLCHAIN": "local", "GOPROXY": "off", "GOSUMDB": "off",
+                "CGO_ENABLED": "1" if "-race" in args else "0"})
     try:
         p = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, timeout=90)
@@ -60,8 +61,9 @@ def run(args, cwd):
         return 124, "execution timeout; evidence incomplete"
 
 
-def go_tests(work, names, runner=run):
-    code, log = runner(["go", "test", "-json", "-count=1", "-timeout=45s", "-run", "^(" + "|".join(names) + ")$", "."], work)
+def go_tests(work, names, runner=run, *, race=False):
+    flags = ["-race"] if race else []
+    code, log = runner(["go", "test", *flags, "-json", "-count=1", "-timeout=45s", "-run", "^(" + "|".join(names) + ")$", "."], work)
     terminal = {name: [] for name in names}
     starts = {name: 0 for name in names}
     for line in log.splitlines():
@@ -102,8 +104,13 @@ def trace_valid(trace):
 def execute(task, work, *, scope_valid, trace=None, runner=run):
     """work contains fixed injected tests and must be a read-only mount in live runs."""
     code, build_log = runner(["go", "build", "./..."], work)
-    names = [n for r in task.data["requirements"] for n in r["tests"] if n not in ("TestUI", "TestTrace")]
+    names = [n for r in task.data["requirements"] for n in r["tests"]
+             if n not in ("TestUI", "TestTrace") and not (task.id == "E07" and n == "TestRace")]
     requirements, req_log = go_tests(work, names, runner)
+    if task.id == "E07":
+        rows, log = go_tests(work, ["TestRace"], runner, race=True)
+        requirements += rows
+        req_log += "\n" + log
     if task.id == "E01":
         ui_code, ui_log = runner(["node", "--experimental-strip-types", str(task.root / "grading" / "ui.mjs"), str(Path(work).resolve() / "ui.ts")], work)
         requirements.append({"name": "TestUI", "executed": True, "status": "passed" if ui_code == 0 else "failed"})
@@ -158,7 +165,8 @@ def container_runner(image, task, work):
                   "--security-opt=no-new-privileges", "--pids-limit=128", "--memory=2g", "--cpus=2",
                   "--user=65534:65534", "--tmpfs=/tmp:rw,nosuid,exec,size=1073741824,mode=1777",
                   "-e", "HOME=/tmp", "-e", "GOCACHE=/tmp/go-build", "-e", "GOPATH=/tmp/go",
-                  "-e", "GOPROXY=off", "-e", "GOSUMDB=off", "-e", "GOTOOLCHAIN=local", "-e", "CGO_ENABLED=0",
+                  "-e", "GOPROXY=off", "-e", "GOSUMDB=off", "-e", "GOTOOLCHAIN=local",
+                  "-e", "CGO_ENABLED=" + ("1" if "-race" in args else "0"),
                   "-v", f"{work}:/work:ro", "-v", f"{grading}:/grading:ro", "-w", "/work", image, *args]
         code, log = run(docker, cwd)
         if code in (125, 126, 127):

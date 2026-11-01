@@ -7,7 +7,7 @@ from factory_eval.grader import prepare, execute, scope, reference_trace, contai
 from factory_eval.task import Task
 
 root=Path(__file__).resolve().parents[1]
-for tid in ('E01','E03'):
+for tid in ('E01','E03','E07'):
     task=Task.load(root/'tasks'/tid)
     with tempfile.TemporaryDirectory(prefix='factory-sandbox-selftest-') as temp:
         staged=prepare(task,task.root/'reference',Path(temp)/'staged')
