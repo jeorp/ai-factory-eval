@@ -172,7 +172,16 @@ func (g *guard) Publish(ctx context.Context, tok string, r gh.PublishRequest, s 
 // Every physical provider request is reserved before any bytes leave this process.
 // Serialized request bytes conservatively upper-bound input tokens including the
 // production system prompt. Output reservation uses the production API cap.
-type gateTransport struct{ base http.RoundTripper }
+type callMeter struct {
+	sequence     int
+	invocation   int
+	reservations []string
+}
+
+type gateTransport struct {
+	base  http.RoundTripper
+	meter *callMeter
+}
 
 func (t gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024))
@@ -197,7 +206,14 @@ func (t gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if maximum <= 0 || len(raw) >= 2*1024*1024 {
 		return nil, errors.New("unbounded_provider_request")
 	}
-	emit("reserve", map[string]any{"input_tokens": len(raw), "output_tokens": maximum})
+	fields := map[string]any{"input_tokens": len(raw), "output_tokens": maximum}
+	if t.meter != nil {
+		t.meter.sequence++
+		id := fmt.Sprintf("http-%d", t.meter.sequence)
+		t.meter.reservations = append(t.meter.reservations, id)
+		fields["reservation_id"] = id
+	}
+	emit("reserve", fields)
 	if !input.Scan() {
 		return nil, errors.New("budget_denied")
 	}
@@ -228,11 +244,24 @@ func (t writeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-type metered struct{ inner agent.Provider }
+type metered struct {
+	inner agent.Provider
+	meter *callMeter
+}
 
 func (p metered) Next(ctx context.Context, key, model, request string) (agent.Decision, agent.Usage, error) {
+	p.meter.invocation++
+	p.meter.reservations = nil
 	d, u, e := p.inner.Next(ctx, key, model, request)
-	emit("usage", map[string]any{"input_tokens": u.InputTokens, "output_tokens": u.OutputTokens, "usage_known": u.InputTokens != 0 || u.OutputTokens != 0})
+	known := u.InputTokens > 0 && u.OutputTokens >= 0
+	fields := map[string]any{"usage_id": fmt.Sprintf("next-%d", p.meter.invocation), "input_tokens": u.InputTokens, "output_tokens": u.OutputTokens, "usage_known": known, "settle": false}
+	// Ambiguous multi-attempt usage or provider errors retain every reservation.
+	// Only one successful physical request can be attributed without guessing.
+	if e == nil && known && len(p.meter.reservations) == 1 {
+		fields["reservation_id"] = p.meter.reservations[0]
+		fields["settle"] = true
+	}
+	emit("usage", fields)
 	return d, u, e
 }
 
@@ -302,7 +331,8 @@ func main() {
 			}
 			ctx, cancel = context.WithTimeout(context.Background(), time.Duration(c.Seconds)*time.Second)
 			defer cancel()
-			httpModel := &http.Client{Transport: gateTransport{http.DefaultTransport}, Timeout: 120 * time.Second}
+			meter := &callMeter{}
+			httpModel := &http.Client{Transport: gateTransport{http.DefaultTransport, meter}, Timeout: 120 * time.Second}
 			var provider agent.Provider
 			switch c.Provider {
 			case "openai":
@@ -317,7 +347,7 @@ func main() {
 			}
 			client := &gh.Client{HTTP: &http.Client{Transport: writeTransport{http.DefaultTransport}, Timeout: 60 * time.Second}, Cache: memory{}}
 			writer = &guard{Client: client, repository: c.Repository, initial: c.BaseCommit, branch: "ai-factory/eval-" + c.RunID + "-work", allowed: c.Allowed, forbidden: c.Forbidden, maxFiles: c.MaxFiles, maxBytes: c.MaxBytes, changes: map[string]domain.FileChange{}}
-			runner = &agent.Runner{AI: metered{provider}, GitHub: writer, Writer: writer}
+			runner = &agent.Runner{AI: metered{provider, meter}, GitHub: writer, Writer: writer}
 			state = domain.Session{ID: "eval-" + c.RunID, Target: target, RunKind: "implement", Model: c.Model}
 			state.Implementation = agent.StartImplementation(nil, agent.ImplementRequest{Request: c.Request, PullNumber: c.PullNumber}, agent.NewCacheID())
 			state.Implementation.BaseCommit = c.BaseCommit

@@ -50,6 +50,8 @@ class Adapter:
                                   stderr=subprocess.DEVNULL, env={**clean_env(), **env}, bufsize=0,
                                   start_new_session=True)
         self.buffer = b""
+        self.usage_events = {}
+        self.reservation_scope = os.urandom(12).hex()
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.p.stdout, selectors.EVENT_READ)
 
@@ -84,21 +86,51 @@ class Adapter:
         while True:
             r = self.row()
             kind = r.get("type")
+            # Child counters restart for each trial; total-budget identities
+            # must remain unique across adapter processes.
+            for key in ("reservation_id", "usage_id"):
+                if key in r:
+                    if not isinstance(r[key], str) or not r[key]:
+                        raise Invalid("invalid model event identity")
+                    r[key] = self.reservation_scope + ":" + r[key]
             if r.get("version") != PROTOCOL_VERSION:
                 raise Invalid("adapter protocol mismatch")
             if kind == "reserve":
-                # Charge every physical HTTP attempt, including provider errors/retries.
-                self.total.reserve(r["input_tokens"], r["output_tokens"])
-                self.trial.reserve(r["input_tokens"], r["output_tokens"])
+                # Precheck both scopes before changing either ledger. Persist
+                # reservation evidence before allowing network transmission.
+                rid = r.get("reservation_id")
+                for budget in (self.total, self.trial):
+                    budget.check_reservation(r["input_tokens"], r["output_tokens"], rid)
+                for budget in (self.total, self.trial):
+                    budget.reserve(r["input_tokens"], r["output_tokens"], rid)
+                self.event({**r, "type": "model_reservation"})
                 self.send({"allow": True})
-                self.event({"type": "model_reservation", "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"]})
             elif kind == "usage":
-                if not r.get("usage_known", True):
-                    self.total.usage.usage_unavailable_calls += 1
-                    self.trial.usage.usage_unavailable_calls += 1
-                self.total.record(r["input_tokens"], r["output_tokens"])
-                self.trial.record(r["input_tokens"], r["output_tokens"])
+                uid = r.get("usage_id")
+                if uid is not None and uid in self.usage_events:
+                    if self.usage_events[uid] != r:
+                        raise Invalid("conflicting usage event")
+                    continue
+                known = r.get("usage_known", True)
+                settle = known and r.get("settle") is True
+                if settle and (not uid or not r.get("reservation_id")):
+                    raise Invalid("settlement identity missing")
+                # Save the original usage evidence even when a bound violation
+                # stops the run. No process restart/resume grants fresh credit.
                 self.event(r)
+                failures = []
+                for budget in (self.total, self.trial):
+                    if not known:
+                        budget.usage.usage_unavailable_calls += 1
+                    try:
+                        budget.record(r["input_tokens"], r["output_tokens"], usage_id=uid,
+                                      reservation_id=r.get("reservation_id"), settle=settle)
+                    except BudgetExceeded as exc:
+                        failures.append(exc)
+                if failures:
+                    raise failures[0]
+                if uid is not None:
+                    self.usage_events[uid] = r
             elif kind == "checkpoint":
                 self.event(r)
             elif kind == "write_intent":

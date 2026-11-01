@@ -88,7 +88,7 @@ class ScoringTests(unittest.TestCase):
         self.e['scope_valid']=False;self.assertEqual(score(self.task,self.e,IDENTITY)['status'],'implementation_failed')
     def test_ai_acceptance_criteria_do_not_change_fixed_requirements(self):
         self.e['ai_acceptance_criteria']=[];self.e['tests'][0]['status']='failed'
-        self.assertEqual(len(score(self.task,self.e,IDENTITY)['requirements']),5)
+        self.assertEqual(len(score(self.task,self.e,IDENTITY)['requirements']),6)
         self.assertEqual(score(self.task,self.e,IDENTITY)['status'],'implementation_failed')
     def test_language_fluency_is_unmeasured(self):self.assertEqual(score(self.task,self.e,IDENTITY)['language_quality'],'unmeasured')
     def test_classifications(self):

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"ai-factory/backend/internal/agent"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -29,7 +32,7 @@ func TestPhysicalProviderCallRequiresReservation(t *testing.T) {
 	f := &fakeTransport{}
 	raw := `{"max_output_tokens":16384,"instructions":"production system prompt","input":"hello"}`
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(raw))
-	if _, err := (gateTransport{f}).RoundTrip(req); err != nil {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err != nil {
 		t.Fatal(err)
 	}
 	var row map[string]any
@@ -44,7 +47,7 @@ func TestDeniedReservationNeverSendsRequest(t *testing.T) {
 	resetIO("{\"allow\":false}\n")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{"max_output_tokens":16384}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err == nil || f.calls != 0 {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err == nil || f.calls != 0 {
 		t.Fatal("denied request escaped")
 	}
 }
@@ -52,7 +55,7 @@ func TestUnboundedRequestNeverSends(t *testing.T) {
 	resetIO("")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err == nil || f.calls != 0 {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err == nil || f.calls != 0 {
 		t.Fatal("unbounded request escaped")
 	}
 }
@@ -60,7 +63,7 @@ func TestGeminiProductionCap(t *testing.T) {
 	b := resetIO("{\"allow\":true}\n")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1beta/models/test:generateContent", strings.NewReader(`{"generationConfig":{"maxOutputTokens":16384}}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err != nil || !strings.Contains(b.String(), `"output_tokens":16384`) {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err != nil || !strings.Contains(b.String(), `"output_tokens":16384`) {
 		t.Fatal("Gemini reservation missing")
 	}
 }
@@ -82,5 +85,66 @@ func TestTaskScopePreventsTestModification(t *testing.T) {
 	}
 	if g.files([]domain.FileChange{{Path: "service.go", Action: "update", Content: strings.Repeat("x", 21)}}) == nil {
 		t.Fatal("size gate ignored")
+	}
+}
+
+// Test the attribution boundary: errors, unknown usage and multiple physical
+// attempts must never release credit from an aggregate provider result.
+type testProvider struct {
+	meter    *callMeter
+	attempts int
+	usage    agent.Usage
+	err      error
+}
+
+func (p testProvider) Next(ctx context.Context, key, model, text string) (agent.Decision, agent.Usage, error) {
+	for i := 0; i < p.attempts; i++ {
+		r, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{"max_output_tokens":100}`))
+		if _, e := (gateTransport{&fakeTransport{}, p.meter}).RoundTrip(r); e != nil {
+			return agent.Decision{}, agent.Usage{}, e
+		}
+	}
+	return agent.Decision{}, p.usage, p.err
+}
+func TestUsageSettlementAttribution(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		attempts int
+		usage    agent.Usage
+		err      error
+		settle   bool
+	}{
+		{"success", 1, agent.Usage{InputTokens: 5, OutputTokens: 3}, nil, true},
+		{"provider-error", 1, agent.Usage{InputTokens: 5, OutputTokens: 3}, errors.New("provider_failed"), false},
+		{"unknown", 1, agent.Usage{}, nil, false},
+		{"retry-aggregate", 2, agent.Usage{InputTokens: 5, OutputTokens: 3}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := resetIO(strings.Repeat("{\"allow\":true}\n", tc.attempts))
+			m := &callMeter{}
+			p := metered{testProvider{m, tc.attempts, tc.usage, tc.err}, m}
+			_, _, _ = p.Next(context.Background(), "key", "model", "request")
+			var row map[string]any
+			scan := bufio.NewScanner(b)
+			ids := map[string]bool{}
+			for scan.Scan() {
+				if e := json.Unmarshal(scan.Bytes(), &row); e != nil {
+					t.Fatal(e)
+				}
+				if row["type"] == "reserve" {
+					id, ok := row["reservation_id"].(string)
+					if !ok || ids[id] {
+						t.Fatal("missing or duplicate physical ID")
+					}
+					ids[id] = true
+				}
+			}
+			if row["type"] != "usage" || row["settle"] != tc.settle || row["usage_id"] != "next-1" {
+				t.Fatalf("unexpected usage: %v", row)
+			}
+			if tc.settle && !ids[row["reservation_id"].(string)] {
+				t.Fatal("unattributed settlement")
+			}
+		})
 	}
 }
