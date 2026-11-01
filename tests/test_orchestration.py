@@ -9,7 +9,7 @@ from unittest.mock import patch
 from factory_eval.orchestrator import Evaluation
 from factory_eval.scoring import score, metrics
 from factory_eval.task import Task
-from factory_eval.util import Invalid, BudgetExceeded
+from factory_eval.util import Invalid, BudgetExceeded, Blocked
 
 ROOT=Path(__file__).resolve().parents[1]
 class FakeAPI:
@@ -20,6 +20,7 @@ class FakeAPI:
 
 class FakeAdapter:
  calls=[]
+ requests=[]
  def __init__(self,binary,env,trial,total,event):self.task=None;self.follows=0;self.number=0;self.closed=False
  def result(self,status):
   changes=[]
@@ -32,6 +33,7 @@ class FakeAdapter:
   return {'implementation':{'status':status,'branch':'ai-factory/eval-test-work','pullNumber':self.number,'commit':'a'*40,'repairRound':1,'ci':{'state':'passed'}},'changes':changes}
  def call(self,action,**kw):
   self.calls.append(action)
+  if action in ('start','followup'):self.requests.append((action,kw['request']))
   if action=='hello':return {'capabilities':{k:True for k in ['real_runner','native_ci','pre_call_budget','draft_pr','followup']}}
   if action=='start':self.number=kw.get('pull_number',0);self.task=Task.load(ROOT/'tasks'/kw['task_id']);return self.result('plan_ready')
   if action=='approve':return self.result('ready')
@@ -45,7 +47,7 @@ class OrchestrationTests(unittest.TestCase):
  def setUp(self):
   self.env=patch.dict(os.environ,{'EVAL_MODEL_KEY':'mock-key','EVAL_WORK_TOKEN':'mock-work','EVAL_CONTROL_TOKEN':'mock-control'});self.env.start()
   self.temp=tempfile.TemporaryDirectory();self.e=Evaluation(ROOT/'examples/config.json',ROOT,Path(self.temp.name)/'results')
-  self.e.work_api=FakeAPI();FakeAdapter.calls=[]
+  self.e.work_api=FakeAPI();FakeAdapter.calls=[];FakeAdapter.requests=[]
  def tearDown(self):self.temp.cleanup();self.env.stop()
  def grader(self,task,record,commit,base,trial,phase='implementation',trace=None):
   initial=phase=='initial'
@@ -61,6 +63,11 @@ class OrchestrationTests(unittest.TestCase):
   self.assertEqual(r['status'],'passed');self.assertLess(FakeAdapter.calls.index('followup'),FakeAdapter.calls.index('publish'))
   self.assertTrue((self.e.destination/r['run_id']/'changes/before-followup.json').exists())
   self.assertFalse(r['cleanup_pending'])
+  task=Task.load(ROOT/'tasks/E03')
+  self.assertEqual(FakeAdapter.requests,[('start',task.request(0)),('followup',task.request(1))])
+  for i,(action,request) in enumerate(FakeAdapter.requests):
+   saved=json.loads((self.e.destination/r['run_id']/f'requests/{i}.json').read_text())
+   self.assertEqual(saved,{'action':action,'request':request})
  def test_e04_creates_real_initial_pr_and_repairs_all_failures(self):
   def grade(task,record,commit,base,trial,phase='implementation',trace=None):
    g=self.grader(task,record,commit,base,trial,phase,trace)
@@ -96,6 +103,40 @@ class OrchestrationTests(unittest.TestCase):
   self.e.total.limits['seconds']=0
   with patch('factory_eval.orchestrator.Adapter',FakeAdapter):r=self.e.run_one(Task.load(ROOT/'tasks/E01'),0,'candidate','c'*40,'fake')
   self.assertEqual(r['status'],'budget_exceeded');self.assertEqual(self.e.work_api.mutations,[])
+
+ def test_failed_ci_repair_is_counted_and_does_not_hide_failed_grade(self):
+  def grade(task,record,commit,base,trial,phase='implementation',trace=None):
+   g=self.grader(task,record,commit,base,trial,phase,trace)
+   if phase=='implementation':g['grading']['status']='implementation_failed'
+   return g
+  self.e.grade=grade
+  class StoppedRepair(FakeAdapter):
+   def call(self,action,**kw):
+    if action=='fix_ci':raise Blocked('implementation_edit_failed')
+    return super().call(action,**kw)
+  with patch('factory_eval.orchestrator.Adapter',StoppedRepair):r=self.e.run_one(Task.load(ROOT/'tasks/E02'),0,'baseline','b'*40,'fake')
+  self.assertEqual(r['status'],'blocked')
+  self.assertEqual(r['attempts'][0]['grading']['status'],'implementation_failed')
+  self.assertEqual(metrics([r])['ci_repairs'],1)
+  self.assertEqual(metrics([r])['false_completion']['count'],1)
+  text=(self.e.destination/r['run_id']/'report.md').read_text()
+  self.assertIn('| blocked | implementation_failed | 1 | 1 |',text)
+
+ def test_initial_grading_counts_in_both_budgets_and_total_cap(self):
+  self.e.config['total_limits']['ci_attempts']=1
+  self.e.eval_api=FakeAPI()
+  self.e.total.limits['ci_attempts']=1
+  task=Task.load(ROOT/'tasks/E02')
+  from factory_eval.budget import Budget
+  trial=Budget(self.e.config['trial_limits'],self.e.config['pricing'])
+  record={'run_id':'a'*24,'repository':'example/work','attempts':[]}
+  # Stop at dispatch: counts must be reserved before any workflow starts.
+  with patch.object(self.e.eval_api,'dispatch',side_effect=Invalid('dispatch unavailable'),create=True):
+   with self.assertRaises(Invalid):self.e.grade(task,record,'a'*40,'a'*40,trial,'initial')
+  self.assertEqual(self.e.total.snapshot()['initial_ci_runs'],1)
+  self.assertEqual(trial.snapshot()['initial_ci_runs'],1)
+  with self.assertRaises(BudgetExceeded):self.e.grade(task,record,'a'*40,'a'*40,trial,'initial')
+  self.assertEqual(trial.snapshot()['ci_runs'],1)
 
 
  def test_ci_repair_checkpoint_may_omit_publication_fields(self):

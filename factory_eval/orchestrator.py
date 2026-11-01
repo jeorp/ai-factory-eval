@@ -81,8 +81,11 @@ class Evaluation:
         c = self.config
         trial.check()
         self.total.check()
-        self.total.reserve_ci()
-        trial.reserve_ci(initial=phase == "initial")
+        initial = phase == "initial"
+        self.total.check_ci(initial=initial, include_initial=True)
+        trial.check_ci(initial=initial)
+        self.total.reserve_ci(initial=initial, include_initial=True)
+        trial.reserve_ci(initial=initial)
         suffix = f'{record["run_id"]}-{phase}-{len(record["attempts"])}'
         inputs = {"run_id": suffix, "repository": record["repository"], "head_sha": commit, "base_sha": base,
                   "task_id": task.id, "definition_sha": c["definition_sha"],
@@ -144,7 +147,7 @@ class Evaluation:
                   "core_sha": core_sha, "definition_sha": c["definition_sha"], "task_version": task.data["version"],
                   "task_fingerprint": task.fingerprint, "requirement_ids": [r["id"] for r in task.data["requirements"]],
                   "repository": c["work_repositories"][task.id]["repository"], "config": c,
-                  "started": now(), "attempts": [], "completed": False, "status": "blocked", "unverified": [],
+                  "started": now(), "attempts": [], "ci_repairs_started": 0, "completed": False, "status": "blocked", "unverified": [],
                   "adapter_hash": digest((self.root / "integrations/ai-factory/main.go").read_bytes())}
         directory = self.destination / run_id
         directory.mkdir(parents=True)
@@ -201,8 +204,10 @@ class Evaluation:
                     {"head": branch, "base": repository["default_branch"], "title": "AI Factory E04 initial failures " + run_id,
                      "body": "Dedicated evaluation run: " + run_id, "draft": True})
                 initial_pull = record["pull_number"] = pull["number"]
+            request = task.request(0)
+            write_json(directory / "requests" / "0.json", {"action": "start", "request": request}, self.secrets)
             result = self.drive(adapter, adapter.call("start", run_id=run_id, task_id=task.id, repository=record["repository"],
-                base_commit=base, base_branch=repository["default_branch"], request=task.data["requests"][0],
+                base_commit=base, base_branch=repository["default_branch"], request=request,
                 pull_number=initial_pull,
                 provider=c["provider"], model=c["model"], allowed_paths=task.data["allowed_paths"], forbidden_paths=task.data["forbidden_paths"],
                 max_files=task.data["max_files"], max_bytes=task.data["max_bytes"], seconds=int(trial.limits["seconds"])))
@@ -212,10 +217,12 @@ class Evaluation:
                 if f is None:
                     raise Blocked("E03 intermediate summary.go missing")
                 return {**f, "base_exists": False, "published": bool(result["implementation"].get("pullNumber"))}
-            for request in task.data["requests"][1:]:
+            for index in range(1, len(task.data["requests"])):
                 if task.id == "E03":
                     trace["before_followup"] = snapshot(result)
                 write_json(directory / "changes" / "before-followup.json", result, self.secrets)
+                request = task.request(index)
+                write_json(directory / "requests" / f"{index}.json", {"action": "followup", "request": request}, self.secrets)
                 result = self.drive(adapter, adapter.call("followup", request=request))
                 if task.id == "E03":
                     trace["after_followup"] = snapshot(result)
@@ -254,6 +261,7 @@ class Evaluation:
                 if not graded["evidence"].get("logs_complete"):
                     raise Blocked("CI failure evidence incomplete")
                 if attempt + 1 < trial.limits["ci_attempts"]:
+                    record["ci_repairs_started"] += 1
                     result = self.drive(adapter, adapter.call("fix_ci"))
             record["static_repairs"] = max(record.get("static_repairs", 0), result["implementation"].get("repairRound", 0))
             record["unverified"] = result["implementation"].get("unverified", [])

@@ -36,32 +36,63 @@ func emit(kind string, fields map[string]any) {
 	_ = output.Encode(fields)
 }
 
-// Forward only the production validator's fixed classifications, never model
-// text, request bodies or arbitrary log messages. This keeps failed generations
-// diagnosable without exposing credentials or changing the provider/Runner.
+// Forward only fixed production classifications and bounded counters. Never
+// forward model text, source, paths, request bodies, or arbitrary log fields.
 type diagnosticWriter struct{}
+
+func diagnosticReason(code string) string {
+	switch code {
+	case "search_action_conflict", "invalid_search", "verification_shape", "verification_file_limit", "verification_repair_invalid", "verification_text_limit", "start_implementation_shape", "plan_action_conflict", "edit_shape", "additional_files_shape", "change_shape", "edit_text_limit", "unverified_text_limit", "verification_phase_mismatch", "search_not_allowed":
+		return code
+	}
+	return "unknown"
+}
+
+func diagnosticError(code string) string {
+	switch code {
+	case "edit_line_range_invalid", "edit_line_anchor_mismatch", "edit_line_overlap", "edit_source_mismatch", "update_format_conflict", "edit_empty", "edit_search_empty", "edit_search_not_found", "edit_search_ambiguous", "change_path_not_in_step", "change_action_not_planned", "create_requires_content", "update_requires_edits", "update_without_change", "change_set_empty", "change_set_size_limit", "change_contains_secret", "change_file_size_limit", "change_store_failed", "invalid_implementation_result", "implementation_edit_failed", "implementation_edit_blocked", "ai_input_limit", "ai_request_limit", "implementation_call_limit", "gemini_invalid_output", "openai_invalid_output":
+		return code
+	}
+	return "unknown"
+}
 
 func (diagnosticWriter) Write(raw []byte) (int, error) {
 	var row map[string]any
-	if json.Unmarshal(raw, &row) != nil || row["msg"] != "implement_response_rejected" {
+	if json.Unmarshal(raw, &row) != nil {
 		return len(raw), nil
 	}
-	fields := map[string]any{"event": "implement_response_rejected"}
-	reason, _ := row["reason"].(string)
-	// implementationResultReason is already a fixed allowlist inside the core.
-	if reason == "" || len(reason) > 64 || !errorCode.MatchString(reason) {
-		reason = "unknown"
+	event, _ := row["msg"].(string)
+	fields := map[string]any{"event": event}
+	switch event {
+	case "implement_response_rejected":
+		reason, _ := row["reason"].(string)
+		fields["reason"] = diagnosticReason(reason)
+		for _, key := range []string{"has_read", "has_search", "has_plan", "has_implementation", "has_verification", "has_start_implementation", "has_start_review", "has_review"} {
+			if value, ok := row[key].(bool); ok {
+				fields[key] = value
+			}
+		}
+	case "implement_edit_rejected", "implement_retry":
+		code, _ := row["error_code"].(string)
+		fields["error_code"] = diagnosticError(code)
+		for _, key := range []string{"step", "file_index", "edit_index", "match_count", "attempt", "retry_count"} {
+			if n, ok := row[key].(float64); ok && n >= 0 && n <= 1000000 && n == float64(int(n)) {
+				fields[key] = int(n)
+			}
+		}
+		if format, ok := row["next_edit_format"].(string); ok && (format == "" || format == "line_ranges") {
+			fields["next_edit_format"] = format
+		}
+	default:
+		return len(raw), nil
 	}
-	fields["reason"] = reason
 	phase, _ := row["phase"].(string)
+	if event == "implement_edit_rejected" {
+		phase = "edit"
+	}
 	switch phase {
 	case "plan", "edit", "verify":
 		fields["phase"] = phase
-	}
-	for _, key := range []string{"has_read", "has_search", "has_plan", "has_implementation", "has_verification", "has_start_implementation", "has_start_review", "has_review"} {
-		if value, ok := row[key].(bool); ok {
-			fields[key] = value
-		}
 	}
 	emit("core_diagnostic", fields)
 	return len(raw), nil

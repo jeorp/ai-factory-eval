@@ -168,3 +168,44 @@ func TestDiagnosticsForwardOnlyValidatorClassifications(t *testing.T) {
 		t.Fatal("arbitrary fields leaked")
 	}
 }
+
+func TestEditDiagnosticsRetainFailureCountersWithoutSourceOrPaths(t *testing.T) {
+	b := resetIO("")
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_edit_rejected","step":2,"file_index":1,"edit_index":3,"match_count":0,"error_code":"edit_search_not_found","next_edit_format":"line_ranges","path":"secret-path.go","original":"secret-source","request":"secret-request"}`))
+	var row map[string]any
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["event"] != "implement_edit_rejected" || row["phase"] != "edit" || row["error_code"] != "edit_search_not_found" || row["file_index"] != float64(1) || row["edit_index"] != float64(3) || row["match_count"] != float64(0) || row["next_edit_format"] != "line_ranges" {
+		t.Fatalf("diagnostic lost: %v", row)
+	}
+	if strings.Contains(b.String(), "secret-") {
+		t.Fatal("source or path leaked")
+	}
+}
+
+func TestRetryDiagnosticsRetainAttemptAndRejectArbitraryValues(t *testing.T) {
+	b := resetIO("")
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_retry","phase":"edit","step":1,"attempt":5,"retry_count":5,"error_code":"update_requires_edits","answer":"secret-text"}`))
+	var row map[string]any
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["error_code"] != "update_requires_edits" || row["attempt"] != float64(5) || row["retry_count"] != float64(5) {
+		t.Fatalf("retry lost: %v", row)
+	}
+	b = resetIO("")
+	row = nil
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_edit_rejected","error_code":"secret_value","step":-1,"attempt":1.5,"file_index":1000001,"match_count":"secret-counter","next_edit_format":"secret-format"}`))
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["error_code"] != "unknown" || strings.Contains(b.String(), "secret") {
+		t.Fatal("unclassified diagnostic leaked")
+	}
+	for _, key := range []string{"step", "attempt", "file_index", "match_count", "next_edit_format"} {
+		if _, ok := row[key]; ok {
+			t.Fatalf("unsafe counter retained: %s", key)
+		}
+	}
+}

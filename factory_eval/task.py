@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import fnmatch
+import json
 
 from .util import Invalid, read_json, safe_path, digest
 
@@ -46,8 +47,22 @@ class Task:
 
     def permits(self, path):
         safe_path(path)
-        return (any(fnmatch.fnmatchcase(path, x) for x in self.data["allowed_paths"])
-                and not any(fnmatch.fnmatchcase(path, x) for x in self.data["forbidden_paths"]))
+        def matches(pattern):
+            # Match Go path.Match in the adapter: wildcards never cross '/'.
+            parts, patterns = path.split("/"), pattern.split("/")
+            return len(parts) == len(patterns) and all(fnmatch.fnmatchcase(p, g) for p, g in zip(parts, patterns))
+        return (any(matches(x) for x in self.data["allowed_paths"])
+                and not any(matches(x) for x in self.data["forbidden_paths"]))
+
+    def request(self, index):
+        """Expose the same scope enforced by approval, without hidden grading data."""
+        scope = {k: self.data[k] for k in ("allowed_paths", "forbidden_paths", "max_files", "max_bytes")}
+        return (self.data["requests"][index] + "\n\n"
+                "変更範囲（この依頼、追加依頼、CI修正のすべてに適用）:\n"
+                "allowed_pathsに一致するパスだけ変更できます。forbidden_pathsが優先します。"
+                "forbidden_pathsに一致するファイルは新規追加・変更・削除とも禁止です。"
+                "max_filesは変更ファイル数、max_bytesは変更後の全ファイル内容のUTF-8バイト数の上限です。"
+                "この範囲内で計画・実装してください。\n" + json.dumps(scope, ensure_ascii=False, sort_keys=True))
 
     def approve(self, files):
         if not files or len(files) > self.data["max_files"]:

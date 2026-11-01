@@ -28,14 +28,17 @@ def report(runs, destination):
         if name not in ("baseline", "candidate"):
             continue
         text.append(f'| {name} | {fmt(m["final_all"])} | {fmt(m["final_scored"])} | {fmt(m["first_ci"])} | {fmt(m["false_completion"])} |')
-    text += ["", "| Run | Task | Variant | Core SHA | Result | CI attempts | Reason |", "|---|---|---|---|---|---:|---|"]
+    text += ["", "| Run | Task | Variant | Core SHA | Result | Last grade | CI attempts | CI repairs started | Reason |", "|---|---|---|---|---|---|---:|---:|---|"]
     for r in runs:
         reason = str(r.get("reason", "")).replace("|", "\\|").replace("\n", " ")
-        text.append(f'| {r["run_id"]} | {r["task_id"]} | {r["variant"]} | `{r["core_sha"]}` | {r["status"]} | {len(r.get("attempts", []))} | {reason} |')
+        attempts = r.get("attempts", [])
+        grade = attempts[-1]["grading"]["status"] if attempts else "unscored"
+        repairs = r.get("ci_repairs_started", max(0, len(attempts)-1))
+        text.append(f'| {r["run_id"]} | {r["task_id"]} | {r["variant"]} | `{r["core_sha"]}` | {r["status"]} | {grade} | {len(attempts)} | {repairs} | {reason} |')
     text += ["", "## Per-trial observations", ""]
     for r in runs:
         text += [f'### {r["run_id"]}', "", f'Task fingerprint: `{r.get("task_fingerprint", "unknown")}`',
-                 f'Usage: `{r.get("usage", {})}`', f'Static repairs: {r.get("static_repairs", 0)}; CI repairs: {max(0, len(r.get("attempts", []))-1)}.',
+                 f'Usage: `{r.get("usage", {})}`', f'Static repairs: {r.get("static_repairs", 0)}; CI repairs started: {r.get("ci_repairs_started", max(0, len(r.get("attempts", []))-1))}.',
                  f'Unverified: {r.get("unverified", [])}', ""]
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "report.md").write_text("\n".join(text) + "\n")

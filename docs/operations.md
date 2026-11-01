@@ -62,7 +62,7 @@ python3 -m factory_eval build-core \
   --output /tmp/core-evaluation-build
 ```
 
-`cmd/factory-eval` を既に持つ本体の版は、衝突を防ぐため上書きせず拒否します。現在の入口は、既存の `StartImplementation`、`Runner.Run`、プロバイダー、GitHub Clientを利用します。ネイティブCI機能を持つ版では `StartCIFix` を呼び、古い版ではライブ評価を `blocked` にします。評価のために異なるプロンプトを注入することはありません。
+`cmd/factory-eval` を既に持つ本体の版は、衝突を防ぐため上書きせず拒否します。現在の入口は、既存の `StartImplementation`、`Runner.Run`、プロバイダー、GitHub Clientを利用します。ネイティブCI機能を持つ版では `StartCIFix` を呼び、古い版ではライブ評価を `blocked` にします。本体のシステムプロンプトは変更しません。利用者の依頼には、課題定義と同じ許可・禁止パス、変更ファイル数・内容サイズの上限を明示します。採点コードや参考解答は渡しません。
 
 ## 5. 初回スモークと比較
 
@@ -117,3 +117,23 @@ python3 -m factory_eval report results/comparison-001
 E01 v2 は、従来の5要求を維持し、READMEにある未指定言語のja既定値を `E01-R06` として追加します。言語省略リクエスト、その保存・再読込、旧保存データについて全5呼び出しを検査し、既存動作の回帰検査にも含めます。初期コードと参考解答ではこの要求が成立します。依頼、初期コード、参考解答は変更しません。v1の過去スコアを上書きせず、v2の指紋・評価定義SHAで再評価してください。
 
 CI修正開始時のチェックポイントではPR番号だけが残り、公開時のbranch/commitが一時的に省略されることがあります。評価側は最後に確認した公開情報を保持します。形式訂正の再試行を使い切った `invalid_implementation_result` はモデル実装失敗として分類し、固定理由コードだけを `core_diagnostic` に保存します。過去の基盤障害記録は変更しません。
+
+## 計測条件の修正（E01 v3 / E02〜E04 v2）
+
+全課題の依頼文に、承認・書き込みガードが使う `allowed_paths`、`forbidden_paths`、`max_files`、`max_bytes` を付けます。追加依頼でも同じ範囲を明示し、CI修正では元の依頼とともに保持します。実際に渡した文は `requests/0.json`、`requests/1.json` 等に、送信した順に保存します。採点要求や参考解答は含めません。
+
+E03 v2 は初期READMEから追加依頼を除き、初回公開可能時点に `Summary` が存在し、`FormatSummary` がまだ含まれないことを追跡検査で確認します。追加後は両関数が存在し、内容が変わり、前後とも未公開・同じ固定ベースへのcreateであることが必要です。最終の関数動作は独立したGoテストで採点します。先に両関数を作って追加依頼を無変更で済ませるケースは合格しません。
+
+入力条件とE03の採点が変わるため、旧結果とは同条件の比較にしません。旧成果物を保持し、評価定義の新SHA・新しい固定タグと課題版で再評価してください。E03は初期READMEも変わるため、`export-task E03` で新しいfixtureブランチを作り、そのSHAを設定します。旧初期SHAは事前検査で拒否されます。タグ名や初期SHAをローカル修正だけで自動的に移動しません。
+
+`core_diagnostic` は、形式拒否に加え、編集適用拒否の固定error_code・step・file_index・edit_index・match_count、および再試行のattempt/retry_countを保存します。対象ファイルは計画とstep/file_indexから照合します。任意のパス・原文・モデル本文・エラー本文は転送しません。未知のコードはunknownです。
+
+`ci_repairs_started` は、修正の公開や再採点に至らず停止した場合も着手した回数を数えます。レポートは最終分類と最後の採点を別々に表示し、採点後のblockedが直前のビルド失敗を隠さないようにします。旧成果物でこの回数がない場合は従来の採点回数から求め、未知の着手回数は復元しません。総CI上限は初期検証も含み、総利用量のinitial_ci_runsにも初期検証を記録します。
+
+本体との接続テストは、実モデルを使わず、ビルドした一時チェックアウトで実行できます（本体は読み取り専用で使用）。
+
+```sh
+python3 -m factory_eval build-core --source /path/to/ai-factory --sha FULL_40_CHARACTER_SHA --output /tmp/core-contract-check
+cd /tmp/core-contract-check/backend
+go test ./cmd/factory-eval -count=1
+```

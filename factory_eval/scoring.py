@@ -66,6 +66,6 @@ def metrics(runs):
             "false_completion": rate(sum(a["grading"]["status"] != "passed" for a in completed), len(completed)),
             "requirements": {k: rate(v["count"], v["denominator"]) for k, v in requirements.items()},
             "static_repairs": sum(r.get("static_repairs", 0) for r in runs),
-            "ci_repairs": sum(max(0, len(r.get("attempts", [])) - 1) for r in runs),
+            "ci_repairs": sum(r.get("ci_repairs_started", max(0, len(r.get("attempts", [])) - 1)) for r in runs),
             "usage": {key: sum(r.get("usage", {}).get(key, 0) for r in runs)
                       for key in ("calls", "input_tokens", "output_tokens", "elapsed_seconds", "ci_runs", "initial_ci_runs", "usage_unavailable_calls")}}

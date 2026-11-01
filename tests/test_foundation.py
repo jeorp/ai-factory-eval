@@ -66,6 +66,14 @@ class BudgetTests(unittest.TestCase):
         for _ in range(3):b.reserve_ci()
         with self.assertRaises(BudgetExceeded):b.reserve_ci()
         self.assertEqual(b.snapshot()['ci_runs'],4)
+    def test_total_ci_limit_includes_initial_runs_without_losing_phase_counts(self):
+        b=budget(ci_attempts=2)
+        b.reserve_ci(initial=True,include_initial=True)
+        b.reserve_ci(include_initial=True)
+        self.assertEqual(b.snapshot()['ci_runs'],2)
+        self.assertEqual(b.snapshot()['initial_ci_runs'],1)
+        for initial in (True,False):
+            with self.assertRaises(BudgetExceeded):b.reserve_ci(initial=initial,include_initial=True)
 
 class ScoringTests(unittest.TestCase):
     def setUp(self):self.task=Task.load(ROOT/'tasks/E01');self.e=evidence(self.task)
@@ -117,7 +125,7 @@ class TaskTests(unittest.TestCase):
     def test_scope_paths(self):
         t=Task.load(ROOT/'tasks/E04')
         self.assertTrue(t.permits('service.go'))
-        for path in ['service_test.go','.github/workflows/ci.yml','go.mod','README.md','grading/test.go']:
+        for path in ['service_test.go','.github/workflows/ci.yml','go.mod','README.md','grading/test.go','nested/service.go','nested/service_test.go']:
             with self.subTest(path=path):self.assertFalse(t.permits(path))
     def test_plan_rejected_before_write(self):
         t=Task.load(ROOT/'tasks/E01')
@@ -138,6 +146,32 @@ class TaskTests(unittest.TestCase):
     def test_create_reference_maintained(self):
         trace=reference_trace(Task.load(ROOT/'tasks/E03'))
         trace['after_followup']['action']='update';self.assertFalse(trace_valid(trace))
+    def test_e03_public_initial_state_does_not_reveal_followup(self):
+        task=Task.load(ROOT/'tasks/E03')
+        public=task.request(0)+'\n'+''.join(p.read_text() for p in (task.root/'initial').rglob('*') if p.is_file())
+        self.assertNotIn('FormatSummary',public)
+        self.assertNotIn(task.data['requests'][1],public)
+        self.assertIn('FormatSummary',task.request(1))
+    def test_trace_rejects_preimplemented_followup_and_noop(self):
+        trace=reference_trace(Task.load(ROOT/'tasks/E03'))
+        trace['before_followup']['content']=trace['after_followup']['content']
+        self.assertFalse(trace_valid(trace))
+        trace['before_followup']['content']+='\n// extra\n'
+        self.assertFalse(trace_valid(trace))
+    def test_trace_requires_both_unpublished_snapshots(self):
+        for value in (True,None):
+            trace=reference_trace(Task.load(ROOT/'tasks/E03'))
+            trace['after_followup']['published']=value
+            self.assertFalse(trace_valid(trace))
+    def test_requests_expose_exact_scope_without_hidden_grading(self):
+        for tid in ['E01','E02','E03','E04']:
+            task=Task.load(ROOT/'tasks'/tid)
+            for i in range(len(task.data['requests'])):
+                request=task.request(i)
+                self.assertTrue(request.startswith(task.data['requests'][i]))
+                bounds=json.loads(request.rsplit('\n',1)[1])
+                self.assertEqual(bounds,{k:task.data[k] for k in ('allowed_paths','forbidden_paths','max_files','max_bytes')})
+                self.assertNotIn('requirements',bounds)
     def test_container_does_not_receive_secrets_or_writable_source(self):
         t=Task.load(ROOT/'tasks/E01')
         captured=[]

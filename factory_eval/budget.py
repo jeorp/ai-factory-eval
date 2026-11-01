@@ -121,10 +121,14 @@ class Budget:
             raise BudgetExceeded("provider usage exceeded reservation")
         return True
 
-    def reserve_ci(self, *, initial=False):
+    def check_ci(self, *, initial=False, include_initial=False):
         self.check()
-        if not initial and self.usage.ci_runs - self.usage.initial_ci_runs >= self.limits["ci_attempts"]:
+        used = self.usage.ci_runs if include_initial else self.usage.ci_runs - self.usage.initial_ci_runs
+        if (include_initial or not initial) and used >= self.limits["ci_attempts"]:
             raise BudgetExceeded("CI run limit")
+
+    def reserve_ci(self, *, initial=False, include_initial=False):
+        self.check_ci(initial=initial, include_initial=include_initial)
         self.usage.ci_runs += 1
         self.usage.initial_ci_runs += int(initial)
 
