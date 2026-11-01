@@ -1,0 +1,73 @@
+{
+  "id": "E06",
+  "version": 1,
+  "purpose": "注文の二重計上を呼び出し経路から調査し、正常系を維持して修正する。",
+  "requests": [
+    "割引を使う注文で、商品合計が二重に計上されることがあります。注文処理の呼び出し経路を調査して修正し、割引なしや空注文の既存動作も維持してください。金額は整数で扱います。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "grading/*"
+  ],
+  "max_files": 4,
+  "max_bytes": 20000,
+  "requirements": [
+    {
+      "id": "E06-R01",
+      "description": "TestDiscountedTotal",
+      "tests": [
+        "TestDiscountedTotal"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E06-R02",
+      "description": "TestNoDiscount",
+      "tests": [
+        "TestNoDiscount"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E06-R01": false,
+    "E06-R02": true
+  },
+  "reference": {
+    "E06-R01": true,
+    "E06-R02": true
+  },
+  "mutations": [
+    {
+      "name": "double-count",
+      "file": "order.go",
+      "old": "discounted(total, o.Discount)",
+      "new": "discounted(total+subtotal(o.Prices), o.Discount)",
+      "detect": [
+        "E06-R01"
+      ]
+    },
+    {
+      "name": "drop-discount",
+      "file": "order.go",
+      "old": "discounted(total, o.Discount)",
+      "new": "discounted(total, 0)",
+      "detect": [
+        "E06-R01"
+      ]
+    }
+  ]
+}

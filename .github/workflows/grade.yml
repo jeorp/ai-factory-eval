@@ -21,7 +21,7 @@ on:
       task_id:
         required: true
         type: choice
-        options: [E01, E02, E03, E04, E05]
+        options: [E01, E02, E03, E04, E05, E06, E07]
       trace:
         required: true
         type: string

@@ -1,0 +1,64 @@
+{
+  "id": "E07",
+  "version": 1,
+  "purpose": "同一台帳への並行送金で重複IDを一度だけ適用し、残高を保護する。",
+  "requests": [
+    "Ledger.Transferを修正してください。同じLedgerへの並行呼び出しに対応し、同じIDは高々1回だけ成功させ、残高不足・不正な送金は状態を変えずにエラーにしてください。成功した送金は原子的に反映してください。BalancesとSeenは呼び出し中に外部から直接変更・参照されないものとし、既存の公開フィールドとTransferの署名を維持してください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "grading/*"
+  ],
+  "max_files": 4,
+  "max_bytes": 20000,
+  "requirements": [
+    {
+      "id": "E07-R01",
+      "description": "TestConcurrentReplay",
+      "tests": [
+        "TestConcurrentReplay"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E07-R02",
+      "description": "TestConcurrentBalance",
+      "tests": [
+        "TestConcurrentBalance"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E07-R01": false,
+    "E07-R02": true
+  },
+  "reference": {
+    "E07-R01": true,
+    "E07-R02": true
+  },
+  "mutations": [
+    {
+      "name": "accept-replay",
+      "file": "ledger.go",
+      "old": "if l.Seen[id] { return errors.New(\"duplicate\") }",
+      "new": "if false { return errors.New(\"duplicate\") }",
+      "detect": [
+        "E07-R01"
+      ]
+    }
+  ]
+}
