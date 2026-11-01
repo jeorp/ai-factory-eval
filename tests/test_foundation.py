@@ -10,7 +10,7 @@ import urllib.request
 from factory_eval.budget import Budget
 from factory_eval.config import load_config
 from factory_eval.github import GitHub, StripCredentialRedirect
-from factory_eval.grader import inventory, scope, trace_valid, reference_trace, container_runner, go_tests
+from factory_eval.grader import inventory, scope, trace_valid, reference_trace, container_runner, go_tests, execute, run as grader_run
 from factory_eval.orchestrator import schedule, validate_initial
 from factory_eval.report import report
 from factory_eval.scoring import score, metrics, classify
@@ -191,6 +191,41 @@ class TaskTests(unittest.TestCase):
     def test_zero_tests_and_fake_output_cannot_pass(self):
         rows,_=go_tests('.', ['TestA'],lambda *_:(0,json.dumps({'Action':'output','Output':'TestA passed'})))
         self.assertFalse(rows[0]['executed']);self.assertEqual(rows[0]['status'],'failed')
+    def test_e07_race_failure_is_required_evidence(self):
+        task=Task.load(ROOT/'tasks/E07')
+        calls=[]
+        def runner(args,cwd):
+            calls.append(args)
+            if args[1]=='build':return 0,''
+            names=args[args.index('-run')+1][2:-2].split('|')
+            race='-race' in args
+            rows=[]
+            for name in names:
+                rows.extend([{'Action':'run','Test':name},{'Action':'fail' if race else 'pass','Test':name}])
+            return int(race),'\n'.join(json.dumps(x) for x in rows)
+        result=execute(task,task.root/'reference',scope_valid=True,runner=runner)
+        self.assertEqual([x['status'] for x in result['jobs']],['passed','failed','passed'])
+        self.assertEqual(next(x for x in result['tests'] if x['name']=='TestRace')['status'],'failed')
+        regular=next(x for x in calls if x[1]=='test' and '-race' not in x)
+        self.assertNotIn('TestRace',regular[regular.index('-run')+1])
+        self.assertEqual(sum('-race' in x for x in calls),1)
+    def test_race_check_enables_cgo_without_changing_regular_checks(self):
+        for race in (False,True):
+            args=['go','test',*(['-race'] if race else []),'.']
+            with patch('factory_eval.grader.subprocess.run') as process:
+                process.return_value.returncode=0;process.return_value.stdout=''
+                grader_run(args,'.')
+                self.assertEqual(process.call_args.kwargs['env']['CGO_ENABLED'],'1' if race else '0')
+            captured=[]
+            with patch('factory_eval.grader.run',side_effect=lambda cmd,cwd:(captured.append(cmd) or (0,''))):
+                container_runner('image',Task.load(ROOT/'tasks/E07'),'/tmp/staged')(args,'/tmp/staged')
+            self.assertIn('CGO_ENABLED='+('1' if race else '0'),captured[0])
+            self.assertIn('--network=none',captured[0]);self.assertIn('--read-only',captured[0])
+    def test_race_process_failure_cannot_be_hidden_by_passing_test_rows(self):
+        lines='\n'.join(json.dumps({'Action':a,'Test':'TestRace'}) for a in ('run','pass'))
+        rows,_=go_tests('.', ['TestRace'],lambda *_:(66,lines),race=True)
+        self.assertEqual(rows[-1]['name'],'__process_exit')
+        self.assertEqual(rows[-1]['status'],'failed')
 
 class GithubTests(unittest.TestCase):
     def test_pagination_and_incomplete_page(self):
