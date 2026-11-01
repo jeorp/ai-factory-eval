@@ -1,0 +1,79 @@
+name: Live model comparison (manual, paid)
+run-name: Live evaluation by ${{ github.actor }}
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: 'Complete factory-eval/v1 config JSON; credential fields are ENVIRONMENT VARIABLE NAMES only'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: live-evaluation
+  cancel-in-progress: false
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: evaluation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate configuration before fetching core or injecting model credentials
+        env:
+          CONFIG: ${{ inputs.config }}
+          CORE_PATH: ${{ github.workspace }}/core
+          CONFIG_PATH: ${{ runner.temp }}/factory-config.json
+        run: |
+          python - <<'PY'
+          import json, os
+          from factory_eval.config import load_config
+          c = json.loads(os.environ['CONFIG'])
+          c['core_path'] = os.environ['CORE_PATH']
+          if c['definition_sha'] != os.environ['GITHUB_SHA'] or c['evaluation_repository'] != os.environ['GITHUB_REPOSITORY']:
+              raise ValueError('configuration must pin this workflow commit and repository')
+          if c['total_limits']['seconds'] > 2700:
+              raise ValueError('Actions control run must fit token lifetime and final artifact upload: <=2700 seconds')
+          if c['credentials'] != {'model':'EVAL_MODEL_KEY','work':'EVAL_WORK_TOKEN','evaluation':'EVAL_CONTROL_TOKEN'}:
+              raise ValueError('Actions credential references must use the documented names')
+          with open(os.environ['CONFIG_PATH'], 'w') as f: json.dump(c, f)
+          load_config(os.environ['CONFIG_PATH'], '.')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ fromJSON(inputs.config).core_repository }}
+          ref: ${{ fromJSON(inputs.config).baseline_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.CORE_READ_TOKEN }}
+          path: core
+          persist-credentials: false
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ secrets.EVAL_APP_ID }}
+          private-key: ${{ secrets.EVAL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Run real Runner, models, Draft PRs and independent GitHub grading
+        env:
+          EVAL_MODEL_KEY: ${{ secrets.EVAL_MODEL_KEY }}
+          EVAL_WORK_TOKEN: ${{ secrets.EVAL_WORK_TOKEN }}
+          EVAL_CONTROL_TOKEN: ${{ steps.app.outputs.token }}
+          CONFIG_PATH: ${{ runner.temp }}/factory-config.json
+        run: python -m factory_eval run --config "$CONFIG_PATH" --output results/live
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-results-${{ github.run_id }}
+          path: results/live
+          retention-days: ${{ fromJSON(inputs.config).retention_days }}
+          if-no-files-found: warn

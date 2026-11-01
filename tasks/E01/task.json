@@ -1,0 +1,123 @@
+{
+  "id": "E01",
+  "version": 1,
+  "purpose": "全プロンプトを英語にし、UI言語をAPI・保存・全AI呼び出しへ渡す。未指定言語はjaとする。",
+  "requests": [
+    "全5種類のプロンプトを英語にしてください。UIから送ったen/jaをAPIで受け取り、保存・再読込し、chat/plan/review/implement/verify全呼び出しの出力言語に指定してください。"
+  ],
+  "allowed_paths": [
+    "*.go",
+    "ui.ts"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "package.json",
+    "grading/*"
+  ],
+  "max_files": 12,
+  "max_bytes": 100000,
+  "requirements": [
+    {
+      "id": "E01-R01",
+      "description": "TestPrompts",
+      "tests": [
+        "TestPrompts"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E01-R02",
+      "description": "TestReceive",
+      "tests": [
+        "TestReceive"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E01-R03",
+      "description": "TestPersistence",
+      "tests": [
+        "TestPersistence"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E01-R04",
+      "description": "TestCalls",
+      "tests": [
+        "TestCalls"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E01-R05",
+      "description": "TestUI",
+      "tests": [
+        "TestUI"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E01-R01": false,
+    "E01-R02": false,
+    "E01-R03": false,
+    "E01-R04": false,
+    "E01-R05": false
+  },
+  "reference": {
+    "E01-R01": true,
+    "E01-R02": true,
+    "E01-R03": true,
+    "E01-R04": true,
+    "E01-R05": true
+  },
+  "mutations": [
+    {
+      "name": "drop-api-layer",
+      "file": "language.go",
+      "old": "Language:normalize(r.Language)",
+      "new": "Language:\"ja\"",
+      "detect": [
+        "E01-R02"
+      ]
+    },
+    {
+      "name": "drop-storage-layer",
+      "file": "language.go",
+      "old": "json.Marshal(s)",
+      "new": "json.Marshal(Session{Text:s.Text})",
+      "detect": [
+        "E01-R03"
+      ]
+    },
+    {
+      "name": "drop-call-layer",
+      "file": "language.go",
+      "old": "Language:normalize(s.Language)",
+      "new": "Language:\"ja\"",
+      "detect": [
+        "E01-R04"
+      ]
+    },
+    {
+      "name": "drop-ui-layer",
+      "file": "ui.ts",
+      "old": "language: language",
+      "new": "language: \"ja\"",
+      "detect": [
+        "E01-R05"
+      ]
+    }
+  ]
+}

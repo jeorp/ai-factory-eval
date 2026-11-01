@@ -1,0 +1,111 @@
+{
+  "id": "E04",
+  "version": 1,
+  "purpose": "ログ前半・中間・後半にある4種類のCI失敗をすべて原因から修正する。",
+  "requests": [
+    "CIの失敗をすべて修正してください。加算、空白だけの文字列の検証、大小文字と空白の正規化、nilマップ参照の4種類が失敗しています。既存テストやアサーションを削除・スキップしないでください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "package.json",
+    "grading/*"
+  ],
+  "max_files": 12,
+  "max_bytes": 100000,
+  "requirements": [
+    {
+      "id": "E04-R01",
+      "description": "TestArithmetic",
+      "tests": [
+        "TestArithmetic"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E04-R02",
+      "description": "TestValidation",
+      "tests": [
+        "TestValidation"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E04-R03",
+      "description": "TestNormalization",
+      "tests": [
+        "TestNormalization"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E04-R04",
+      "description": "TestNilLookup",
+      "tests": [
+        "TestNilLookup"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E04-R01": false,
+    "E04-R02": false,
+    "E04-R03": false,
+    "E04-R04": false
+  },
+  "reference": {
+    "E04-R01": true,
+    "E04-R02": true,
+    "E04-R03": true,
+    "E04-R04": true
+  },
+  "mutations": [
+    {
+      "name": "skip-public-tests",
+      "file": "service_test.go",
+      "old": "if Add(2,3)!=5",
+      "new": "t.Skip(\"skip\"); if Add(2,3)!=5",
+      "detect_scope": true
+    },
+    {
+      "name": "delete-public-assertion",
+      "file": "service_test.go",
+      "old": "t.Fatal(\"addition broken\")",
+      "new": "",
+      "detect_scope": true
+    },
+    {
+      "name": "unused-import",
+      "file": "service.go",
+      "old": "import \"strings\"",
+      "new": "import (\"strings\";\"fmt\")",
+      "detect": [
+        "E04-R01",
+        "E04-R02",
+        "E04-R03",
+        "E04-R04"
+      ]
+    },
+    {
+      "name": "only-last-failure-fixed",
+      "file": "service.go",
+      "old": "return a+b",
+      "new": "return a-b",
+      "detect": [
+        "E04-R01"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+package main
+import (
+ "errors"
+ "ai-factory/backend/internal/domain"
+)
+const nativeCI = false
+func startCIFix(i *domain.Implementation)(*domain.Implementation,error){return i,errors.New("ci_capability_unavailable")}

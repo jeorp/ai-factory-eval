@@ -1,0 +1,135 @@
+name: Trusted grading
+run-name: ${{ inputs.run_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        required: true
+        type: string
+      repository:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      definition_sha:
+        required: true
+        type: string
+      task_id:
+        required: true
+        type: choice
+        options: [E01, E02, E03, E04]
+      trace:
+        required: true
+        type: string
+        default: '{}'
+      retention_days:
+        required: true
+        type: string
+        default: '30'
+permissions:
+  contents: read
+jobs:
+  grade:
+    if: inputs.definition_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.definition_sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Validate fixed workflow and dedicated target before checkout
+        env:
+          DEFINITION_SHA: ${{ inputs.definition_sha }}
+          WORK_REPOSITORY: ${{ inputs.repository }}
+          WORK_REPOSITORIES: ${{ vars.EVAL_WORK_REPOSITORIES }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          RETENTION_DAYS: ${{ inputs.retention_days }}
+        working-directory: trusted
+        run: |
+          python - <<'PY'
+          import json, os
+          from factory_eval.util import sha, repo, Invalid
+          if sha(os.environ['DEFINITION_SHA']) != os.environ['GITHUB_SHA']:
+              raise Invalid('workflow must execute at pinned SHA')
+          if repo(os.environ['WORK_REPOSITORY']) not in json.loads(os.environ['WORK_REPOSITORIES']):
+              raise Invalid('repository not allowlisted')
+          sha(os.environ['HEAD_SHA']); sha(os.environ['BASE_SHA'])
+          if not 1 <= int(os.environ['RETENTION_DAYS']) <= 90:
+              raise Invalid('invalid retention')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.head_sha }}
+          token: ${{ secrets.EVAL_READ_TOKEN }}
+          path: candidate
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Build trusted sandbox image
+        run: docker build -f trusted/integrations/grading.Dockerfile -t factory-grading:local trusted
+      - name: Grade candidate in containers without credentials or network
+        working-directory: trusted
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          WORK_REPOSITORY: ${{ inputs.repository }}
+          WORK_REPOSITORIES: ${{ vars.EVAL_WORK_REPOSITORIES }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          DEFINITION_SHA: ${{ inputs.definition_sha }}
+          RUN_ID: ${{ inputs.run_id }}
+          TRACE: ${{ inputs.trace }}
+          CANDIDATE_PATH: ${{ github.workspace }}/candidate
+        run: python scripts/grade_ci.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raw-grading-${{ inputs.run_id }}
+          path: trusted/out/grading.json
+          retention-days: ${{ fromJSON(inputs.retention_days) }}
+          if-no-files-found: error
+  report:
+    needs: grade
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: evaluation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.definition_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-grading-${{ inputs.run_id }}
+          path: out
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ secrets.EVAL_APP_ID }}
+          private-key: ${{ secrets.EVAL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.EVAL_WORK_REPOSITORIES_CSV }}
+      - name: Publish authenticated checks to the exact work commit
+        env:
+          CHECKS_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUER_ID: ${{ secrets.EVAL_APP_ID }}
+          WORK_REPOSITORY: ${{ inputs.repository }}
+          WORK_REPOSITORIES: ${{ vars.EVAL_WORK_REPOSITORIES }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          DEFINITION_SHA: ${{ inputs.definition_sha }}
+          RUN_ID: ${{ inputs.run_id }}
+          TASK_ID: ${{ inputs.task_id }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python scripts/report_checks.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grading-${{ inputs.run_id }}
+          path: out/grading.json
+          retention-days: ${{ fromJSON(inputs.retention_days) }}
+          if-no-files-found: error

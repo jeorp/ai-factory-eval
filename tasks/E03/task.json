@@ -1,0 +1,97 @@
+{
+  "id": "E03",
+  "version": 1,
+  "purpose": "新規ファイルを公開前に追加修正し、固定ベースに対するcreateを維持する。",
+  "requests": [
+    "Applyを修正し、新規ファイルでは変更前コードを要求せず、公開前に同じファイルへ追記してもAction=createを維持してください。summary.goを追加しSummary(s string)で前後空白を除去してください。",
+    "PR作成前の追加依頼です。同じsummary.goにFormatSummary(s string)を追加し、\"Summary: \"+Summary(s)を返してください。最初のSummaryと変更内容を保持してください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "package.json",
+    "grading/*"
+  ],
+  "max_files": 12,
+  "max_bytes": 100000,
+  "requirements": [
+    {
+      "id": "E03-R01",
+      "description": "TestCreate",
+      "tests": [
+        "TestCreate"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E03-R02",
+      "description": "TestOverlay",
+      "tests": [
+        "TestOverlay"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E03-R03",
+      "description": "TestSummary",
+      "tests": [
+        "TestSummary"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E03-R04",
+      "description": "TestTrace",
+      "tests": [
+        "TestTrace"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E03-R01": false,
+    "E03-R02": false,
+    "E03-R03": false,
+    "E03-R04": false
+  },
+  "reference": {
+    "E03-R01": true,
+    "E03-R02": true,
+    "E03-R03": true,
+    "E03-R04": true
+  },
+  "mutations": [
+    {
+      "name": "original-required-for-create",
+      "file": "engine.go",
+      "old": "action:=\"update\"; if !exists {action=\"create\"}",
+      "new": "if !exists {return Change{},fmt.Errorf(\"original required\")}; action:=\"update\"",
+      "detect": [
+        "E03-R01",
+        "E03-R02"
+      ],
+      "extra_import": "fmt"
+    },
+    {
+      "name": "followup-overwrites-first-content",
+      "file": "summary.go",
+      "old": "return strings.TrimSpace(s)",
+      "new": "return strings.TrimSpace(s)+\"broken\"",
+      "detect": [
+        "E03-R03"
+      ]
+    }
+  ]
+}

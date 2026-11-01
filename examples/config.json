@@ -1,0 +1,76 @@
+{
+  "version": "factory-eval/v1",
+  "evaluation_repository": "jeorp/ai-factory-eval",
+  "definition_sha": "0000000000000000000000000000000000000000",
+  "workflow_ref": "eval-pinned-v1",
+  "core_repository": "jeorp/ai-factory",
+  "core_path": "/path/to/ai-factory",
+  "baseline_sha": "1111111111111111111111111111111111111111",
+  "candidate_sha": "2222222222222222222222222222222222222222",
+  "work_repositories": {
+    "E01": {
+      "repository": "jeorp/ai-factory-eval-work-e01",
+      "initial_sha": "3333333333333333333333333333333333333333",
+      "dedicated": true
+    },
+    "E02": {
+      "repository": "jeorp/ai-factory-eval-work-e02",
+      "initial_sha": "4444444444444444444444444444444444444444",
+      "dedicated": true
+    },
+    "E03": {
+      "repository": "jeorp/ai-factory-eval-work-e03",
+      "initial_sha": "5555555555555555555555555555555555555555",
+      "dedicated": true
+    },
+    "E04": {
+      "repository": "jeorp/ai-factory-eval-work-e04",
+      "initial_sha": "6666666666666666666666666666666666666666",
+      "dedicated": true
+    }
+  },
+  "tasks": [
+    "E01",
+    "E02",
+    "E03",
+    "E04"
+  ],
+  "provider": "gemini",
+  "model": "REPLACE_WITH_EXPLICIT_MODEL",
+  "model_version": null,
+  "generation": {
+    "mode": "production-defaults"
+  },
+  "trials": 3,
+  "concurrency": 1,
+  "trial_limits": {
+    "calls": 20,
+    "input_tokens": 2000000,
+    "output_tokens": 400000,
+    "seconds": 600,
+    "ci_attempts": 3,
+    "cost": "5.00"
+  },
+  "total_limits": {
+    "calls": 160,
+    "input_tokens": 16000000,
+    "output_tokens": 3200000,
+    "seconds": 2700,
+    "ci_attempts": 96,
+    "cost": "40.00"
+  },
+  "pricing": {
+    "input_per_million": "1.00",
+    "output_per_million": "5.00",
+    "currency": "USD",
+    "effective_date": "2026-11-01"
+  },
+  "retention_days": 30,
+  "credentials": {
+    "model": "EVAL_MODEL_KEY",
+    "work": "EVAL_WORK_TOKEN",
+    "evaluation": "EVAL_CONTROL_TOKEN"
+  },
+  "check_issuer": 123456,
+  "cleanup": true
+}

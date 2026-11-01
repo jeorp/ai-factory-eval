@@ -1,0 +1,32 @@
+name: Foundation tests (no model calls)
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.10.0'
+      - name: Unit, contract, and intentional-breakage tests
+        run: python -m unittest discover -s tests -v
+      - name: Verify all initial fixtures, reference answers and mutations
+        run: python -m factory_eval self-test
+      - name: Build credential-free grading sandbox
+        run: docker build -f integrations/grading.Dockerfile -t factory-grading:local .
+      - name: Verify Go and TypeScript grading inside the actual sandbox
+        run: python scripts/sandbox_selftest.py

@@ -1,0 +1,96 @@
+{
+  "id": "E02",
+  "version": 1,
+  "purpose": "ItemとViewに任意のLabel stringを追加し、変換・保存・旧形式との互換性を保つ。",
+  "requests": [
+    "ItemとViewに任意フィールドLabel string（JSON名label、空なら省略）を追加し、Convertと保存・再読込にも対応してください。既存の呼び出しは壊さないでください。"
+  ],
+  "allowed_paths": [
+    "*.go"
+  ],
+  "forbidden_paths": [
+    ".git/*",
+    ".github/*",
+    "*_test.go",
+    "go.mod",
+    "go.sum",
+    "README.md",
+    "package.json",
+    "grading/*"
+  ],
+  "max_files": 12,
+  "max_bytes": 100000,
+  "requirements": [
+    {
+      "id": "E02-R01",
+      "description": "TestField",
+      "tests": [
+        "TestField"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E02-R02",
+      "description": "TestConversion",
+      "tests": [
+        "TestConversion"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E02-R03",
+      "description": "TestStorage",
+      "tests": [
+        "TestStorage"
+      ],
+      "job": "requirements"
+    },
+    {
+      "id": "E02-R04",
+      "description": "TestCompatibility",
+      "tests": [
+        "TestCompatibility"
+      ],
+      "job": "requirements"
+    }
+  ],
+  "required_jobs": [
+    "build",
+    "requirements",
+    "regression"
+  ],
+  "initial": {
+    "E02-R01": false,
+    "E02-R02": false,
+    "E02-R03": false,
+    "E02-R04": true
+  },
+  "reference": {
+    "E02-R01": true,
+    "E02-R02": true,
+    "E02-R03": true,
+    "E02-R04": true
+  },
+  "mutations": [
+    {
+      "name": "field-use-without-definition",
+      "file": "item.go",
+      "old": "Label string `json:\"label,omitempty\"`",
+      "new": "",
+      "detect": [
+        "E02-R01",
+        "E02-R02",
+        "E02-R03"
+      ]
+    },
+    {
+      "name": "conversion-omitted",
+      "file": "item.go",
+      "old": ",Label:i.Label",
+      "new": "",
+      "detect": [
+        "E02-R02"
+      ]
+    }
+  ]
+}

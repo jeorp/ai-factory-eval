@@ -1,0 +1,7 @@
+package main
+import (
+ "ai-factory/backend/internal/agent"
+ "ai-factory/backend/internal/domain"
+)
+const nativeCI = true
+func startCIFix(i *domain.Implementation)(*domain.Implementation,error){return agent.StartCIFix(i,agent.NewCacheID()),nil}

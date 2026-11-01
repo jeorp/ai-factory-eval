@@ -1,0 +1,5 @@
+新規ファイルを公開前に追加修正し、固定ベースに対するcreateを維持する。
+
+Applyを修正し、新規ファイルでは変更前コードを要求せず、公開前に同じファイルへ追記してもAction=createを維持してください。summary.goを追加しSummary(s string)で前後空白を除去してください。
+
+PR作成前の追加依頼です。同じsummary.goにFormatSummary(s string)を追加し、"Summary: "+Summary(s)を返してください。最初のSummaryと変更内容を保持してください。

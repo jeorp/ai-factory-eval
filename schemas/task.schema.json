@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI Factory evaluation task v1",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "purpose",
+    "requests",
+    "allowed_paths",
+    "forbidden_paths",
+    "max_files",
+    "max_bytes",
+    "requirements",
+    "required_jobs",
+    "initial",
+    "reference",
+    "mutations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "forbidden_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "max_files": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "description",
+          "tests",
+          "job"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^E0[1-4]-R[0-9]{2}$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tests": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "job": {
+            "enum": [
+              "build",
+              "requirements",
+              "regression"
+            ]
+          }
+        }
+      }
+    },
+    "required_jobs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "initial": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "mutations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "file",
+          "old",
+          "new"
+        ]
+      }
+    }
+  }
+}
