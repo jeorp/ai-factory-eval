@@ -1,6 +1,6 @@
 {
   "id": "E01",
-  "version": 1,
+  "version": 3,
   "purpose": "全プロンプトを英語にし、UI言語をAPI・保存・全AI呼び出しへ渡す。未指定言語はjaとする。",
   "requests": [
     "全5種類のプロンプトを英語にしてください。UIから送ったen/jaをAPIで受け取り、保存・再読込し、chat/plan/review/implement/verify全呼び出しの出力言語に指定してください。"
@@ -61,6 +61,14 @@
         "TestUI"
       ],
       "job": "requirements"
+    },
+    {
+      "id": "E01-R06",
+      "description": "Omitted language and legacy saved sessions keep the documented ja default in all calls",
+      "tests": [
+        "TestDefaultLanguage"
+      ],
+      "job": "requirements"
     }
   ],
   "required_jobs": [
@@ -73,14 +81,16 @@
     "E01-R02": false,
     "E01-R03": false,
     "E01-R04": false,
-    "E01-R05": false
+    "E01-R05": false,
+    "E01-R06": true
   },
   "reference": {
     "E01-R01": true,
     "E01-R02": true,
     "E01-R03": true,
     "E01-R04": true,
-    "E01-R05": true
+    "E01-R05": true,
+    "E01-R06": true
   },
   "mutations": [
     {
@@ -117,6 +127,15 @@
       "new": "language: \"ja\"",
       "detect": [
         "E01-R05"
+      ]
+    },
+    {
+      "name": "drop-default-language",
+      "file": "language.go",
+      "old": "Language:normalize(s.Language)",
+      "new": "Language:s.Language",
+      "detect": [
+        "E01-R06"
       ]
     }
   ]

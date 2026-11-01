@@ -19,9 +19,10 @@
 
 | 出力type | 内容 |
 |---|---|
-| reserve | 物理モデルHTTPリクエスト直前の入力上界・最大出力。親の `{"allow": true}` が必要 |
+| reserve | 物理モデルHTTPリクエスト直前のreservation_id・入力上界・最大出力。親の `{"allow": true}` が必要 |
 | write_intent | GitHubの各書き込み直前。親の停止・時間上限確認後の承認が必要 |
-| usage | プロバイダーから得た実トークン数とusage_known |
+| usage | プロバイダーから得た実トークン数、usage_known、usage_id。正常な単一リクエストのみsettle=trueとreservation_idを付与して差額精算する。エラー・複数試行・識別子欠落は精算しない |
+| core_diagnostic | 形式拒否・編集適用拒否・再試行の固定コード、フェーズ、操作有無、step/file_index/edit_index/match_count/attempt/retry_count。任意の本文・パス・生ログは渡さない |
 | checkpoint | 本体Runnerが発行したチェックポイント、計画、AIの受け入れ条件、未確認事項 |
 | result | implementation、生成changes、metrics、サニタイズされたerrorコード |
 
@@ -32,3 +33,5 @@
 採点証拠の識別子は repository、commit、definition_sha、run_id、issuer（GitHub App ID）、workflow_run_id です。必須のbuild・requirements・regressionの3チェックはすべて同じ識別子に対応し、GitHub APIから取得した発行元とdetails URLを照合します。
 
 本体に未対応の機能がある場合は `ci_capability_unavailable` として停止します。評価のために本体の生成やCI修正を別の実装で代替しません。
+
+評価制御側は、`request` に依頼と同じ許可・禁止パスおよび変更量の上限を明記します。`requests/<index>.json` は実際に送信した文だけを送信順に保存し、後続依頼を先にモデルへ渡しません。E03の追跡検査は追加前のFormatSummary未実装、追加後の実装と内容変更、および両時点の未公開状態を必須にします。

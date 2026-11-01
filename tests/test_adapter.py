@@ -5,7 +5,7 @@ import unittest
 
 from factory_eval.adapter import Adapter
 from factory_eval.budget import Budget
-from factory_eval.util import BudgetExceeded, Invalid
+from factory_eval.util import BudgetExceeded, Invalid, ImplementationFailed
 
 SCRIPT='''#!/usr/bin/env python3
 import json,sys
@@ -23,6 +23,9 @@ for line in sys.stdin:
    emit('result',implementation={'status':'ready'})
  if command['action']=='write':
   emit('write_intent');json.loads(sys.stdin.readline());emit('result',implementation={'status':'published'})
+ if command['action']=='invalid-output':
+  emit('core_diagnostic',reason='plan_action_conflict',phase='plan')
+  emit('result',error='invalid_implementation_result')
  if command['action']=='bad':print('not-json',flush=True)
 '''
 
@@ -48,6 +51,9 @@ class AdapterTests(unittest.TestCase):
   self.total.cancelled=True
   from factory_eval.util import Cancelled
   with self.assertRaises(Cancelled):self.adapter.call('write')
+ def test_invalid_model_output_is_implementation_failure(self):
+  with self.assertRaises(ImplementationFailed):self.adapter.call('invalid-output')
+  self.assertTrue(any(e.get('type')=='core_diagnostic' and e.get('reason')=='plan_action_conflict' for e in self.events))
  def test_invalid_protocol_is_infrastructure_error(self):
   with self.assertRaises(Invalid):self.adapter.call('bad')
 

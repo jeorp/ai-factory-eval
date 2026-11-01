@@ -87,12 +87,14 @@ def trace_valid(trace):
     try:
         before, after = trace["before_followup"], trace["after_followup"]
         return (before["action"] == after["action"] == "create"
-                and "func Summary(" in before["content"]
-                and "func Summary(" in after["content"]
-                and "func FormatSummary(" in after["content"]
+                and re.search(r"\bfunc\s+Summary\s*\(", before["content"]) is not None
+                and re.search(r"\bfunc\s+Summary\s*\(", after["content"]) is not None
+                and "FormatSummary" not in before["content"]
+                and re.search(r"\bfunc\s+FormatSummary\s*\(", after["content"]) is not None
+                and before["content"] != after["content"]
                 and before["base_commit"] == after["base_commit"]
                 and before["base_exists"] is False and after["base_exists"] is False
-                and not before.get("published", True))
+                and before.get("published") is False and after.get("published") is False)
     except (KeyError, TypeError):
         return False
 
@@ -134,7 +136,7 @@ def reference_trace(task):
     content = (task.root / "reference" / "summary.go").read_text()
     return {"before_followup": {"action": "create", "content": content.split("func FormatSummary")[0],
                                "base_commit": "0" * 40, "base_exists": False, "published": False},
-            "after_followup": {"action": "create", "content": content, "base_commit": "0" * 40, "base_exists": False}}
+            "after_followup": {"action": "create", "content": content, "base_commit": "0" * 40, "base_exists": False, "published": False}}
 
 
 def evaluate(task, candidate, trace=None):

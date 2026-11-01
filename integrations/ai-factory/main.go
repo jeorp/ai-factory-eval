@@ -36,6 +36,68 @@ func emit(kind string, fields map[string]any) {
 	_ = output.Encode(fields)
 }
 
+// Forward only fixed production classifications and bounded counters. Never
+// forward model text, source, paths, request bodies, or arbitrary log fields.
+type diagnosticWriter struct{}
+
+func diagnosticReason(code string) string {
+	switch code {
+	case "search_action_conflict", "invalid_search", "verification_shape", "verification_file_limit", "verification_repair_invalid", "verification_text_limit", "start_implementation_shape", "plan_action_conflict", "edit_shape", "additional_files_shape", "change_shape", "edit_text_limit", "unverified_text_limit", "verification_phase_mismatch", "search_not_allowed":
+		return code
+	}
+	return "unknown"
+}
+
+func diagnosticError(code string) string {
+	switch code {
+	case "edit_line_range_invalid", "edit_line_anchor_mismatch", "edit_line_overlap", "edit_source_mismatch", "update_format_conflict", "edit_empty", "edit_search_empty", "edit_search_not_found", "edit_search_ambiguous", "change_path_not_in_step", "change_action_not_planned", "create_requires_content", "update_requires_edits", "update_without_change", "change_set_empty", "change_set_size_limit", "change_contains_secret", "change_file_size_limit", "change_store_failed", "invalid_implementation_result", "implementation_edit_failed", "implementation_edit_blocked", "ai_input_limit", "ai_request_limit", "implementation_call_limit", "gemini_invalid_output", "openai_invalid_output":
+		return code
+	}
+	return "unknown"
+}
+
+func (diagnosticWriter) Write(raw []byte) (int, error) {
+	var row map[string]any
+	if json.Unmarshal(raw, &row) != nil {
+		return len(raw), nil
+	}
+	event, _ := row["msg"].(string)
+	fields := map[string]any{"event": event}
+	switch event {
+	case "implement_response_rejected":
+		reason, _ := row["reason"].(string)
+		fields["reason"] = diagnosticReason(reason)
+		for _, key := range []string{"has_read", "has_search", "has_plan", "has_implementation", "has_verification", "has_start_implementation", "has_start_review", "has_review"} {
+			if value, ok := row[key].(bool); ok {
+				fields[key] = value
+			}
+		}
+	case "implement_edit_rejected", "implement_retry":
+		code, _ := row["error_code"].(string)
+		fields["error_code"] = diagnosticError(code)
+		for _, key := range []string{"step", "file_index", "edit_index", "match_count", "attempt", "retry_count"} {
+			if n, ok := row[key].(float64); ok && n >= 0 && n <= 1000000 && n == float64(int(n)) {
+				fields[key] = int(n)
+			}
+		}
+		if format, ok := row["next_edit_format"].(string); ok && (format == "" || format == "line_ranges") {
+			fields["next_edit_format"] = format
+		}
+	default:
+		return len(raw), nil
+	}
+	phase, _ := row["phase"].(string)
+	if event == "implement_edit_rejected" {
+		phase = "edit"
+	}
+	switch phase {
+	case "plan", "edit", "verify":
+		fields["phase"] = phase
+	}
+	emit("core_diagnostic", fields)
+	return len(raw), nil
+}
+
 type memory map[string]string
 
 func (m memory) Get(_ context.Context, k string) (string, bool) { v, ok := m[k]; return v, ok }
@@ -172,7 +234,16 @@ func (g *guard) Publish(ctx context.Context, tok string, r gh.PublishRequest, s 
 // Every physical provider request is reserved before any bytes leave this process.
 // Serialized request bytes conservatively upper-bound input tokens including the
 // production system prompt. Output reservation uses the production API cap.
-type gateTransport struct{ base http.RoundTripper }
+type callMeter struct {
+	sequence     int
+	invocation   int
+	reservations []string
+}
+
+type gateTransport struct {
+	base  http.RoundTripper
+	meter *callMeter
+}
 
 func (t gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024))
@@ -197,7 +268,14 @@ func (t gateTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if maximum <= 0 || len(raw) >= 2*1024*1024 {
 		return nil, errors.New("unbounded_provider_request")
 	}
-	emit("reserve", map[string]any{"input_tokens": len(raw), "output_tokens": maximum})
+	fields := map[string]any{"input_tokens": len(raw), "output_tokens": maximum}
+	if t.meter != nil {
+		t.meter.sequence++
+		id := fmt.Sprintf("http-%d", t.meter.sequence)
+		t.meter.reservations = append(t.meter.reservations, id)
+		fields["reservation_id"] = id
+	}
+	emit("reserve", fields)
 	if !input.Scan() {
 		return nil, errors.New("budget_denied")
 	}
@@ -228,11 +306,24 @@ func (t writeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
-type metered struct{ inner agent.Provider }
+type metered struct {
+	inner agent.Provider
+	meter *callMeter
+}
 
 func (p metered) Next(ctx context.Context, key, model, request string) (agent.Decision, agent.Usage, error) {
+	p.meter.invocation++
+	p.meter.reservations = nil
 	d, u, e := p.inner.Next(ctx, key, model, request)
-	emit("usage", map[string]any{"input_tokens": u.InputTokens, "output_tokens": u.OutputTokens, "usage_known": u.InputTokens != 0 || u.OutputTokens != 0})
+	known := u.InputTokens > 0 && u.OutputTokens >= 0
+	fields := map[string]any{"usage_id": fmt.Sprintf("next-%d", p.meter.invocation), "input_tokens": u.InputTokens, "output_tokens": u.OutputTokens, "usage_known": known, "settle": false}
+	// Ambiguous multi-attempt usage or provider errors retain every reservation.
+	// Only one successful physical request can be attributed without guessing.
+	if e == nil && known && len(p.meter.reservations) == 1 {
+		fields["reservation_id"] = p.meter.reservations[0]
+		fields["settle"] = true
+	}
+	emit("usage", fields)
 	return d, u, e
 }
 
@@ -264,7 +355,7 @@ func snapshotChanges(ctx context.Context, writer *guard, i *domain.Implementatio
 
 func main() {
 	input.Buffer(make([]byte, 65536), 4*1024*1024)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewJSONHandler(diagnosticWriter{}, nil))
 	slog.SetDefault(logger)
 	var runner *agent.Runner
 	var state domain.Session
@@ -302,7 +393,8 @@ func main() {
 			}
 			ctx, cancel = context.WithTimeout(context.Background(), time.Duration(c.Seconds)*time.Second)
 			defer cancel()
-			httpModel := &http.Client{Transport: gateTransport{http.DefaultTransport}, Timeout: 120 * time.Second}
+			meter := &callMeter{}
+			httpModel := &http.Client{Transport: gateTransport{http.DefaultTransport, meter}, Timeout: 120 * time.Second}
 			var provider agent.Provider
 			switch c.Provider {
 			case "openai":
@@ -317,7 +409,7 @@ func main() {
 			}
 			client := &gh.Client{HTTP: &http.Client{Transport: writeTransport{http.DefaultTransport}, Timeout: 60 * time.Second}, Cache: memory{}}
 			writer = &guard{Client: client, repository: c.Repository, initial: c.BaseCommit, branch: "ai-factory/eval-" + c.RunID + "-work", allowed: c.Allowed, forbidden: c.Forbidden, maxFiles: c.MaxFiles, maxBytes: c.MaxBytes, changes: map[string]domain.FileChange{}}
-			runner = &agent.Runner{AI: metered{provider}, GitHub: writer, Writer: writer}
+			runner = &agent.Runner{AI: metered{provider, meter}, GitHub: writer, Writer: writer}
 			state = domain.Session{ID: "eval-" + c.RunID, Target: target, RunKind: "implement", Model: c.Model}
 			state.Implementation = agent.StartImplementation(nil, agent.ImplementRequest{Request: c.Request, PullNumber: c.PullNumber}, agent.NewCacheID())
 			state.Implementation.BaseCommit = c.BaseCommit

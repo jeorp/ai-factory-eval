@@ -35,4 +35,6 @@ baseline / candidate を各課題で交互に、既定3回ずつ実行します�
 
 生成コードは、信頼済み評価ワークフローからネットワーク・資格情報のないコンテナで実行します。ホストが生の実行結果を解析し、別のジョブが評価用 GitHub App として正確なコミットへチェックを発行します。発行元・実行ID・ワークフロー実行・コミットが一致しない結果は採用しません。
 
-実行成果物は `run.json`、`checkpoint.json`、`events.jsonl`、`changes/`、`grading.json`、`ci/`、`report.md`、比較全体の `comparison.json` / `usage.json` です。既定保存期間は30日です。
+計測条件を修正した課題版は E01 v3 / E02〜E04 v2 です。全依頼で変更範囲を明示し、E03は追加依頼の先読みを防いで実際の内容変更を採点します。旧結果は上書きせず、新しい評価SHAとE03の初期SHAで再実行します。詳細は [実行手順](docs/operations.md) を参照してください。
+
+実行成果物は `requests/`、`run.json`、`checkpoint.json`、`events.jsonl`、`changes/`、`grading.json`、`ci/`、`report.md`、比較全体の `comparison.json` / `usage.json` です。既定保存期間は30日です。

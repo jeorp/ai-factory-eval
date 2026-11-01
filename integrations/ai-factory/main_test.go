@@ -1,9 +1,12 @@
 package main
 
 import (
+	"ai-factory/backend/internal/agent"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -29,7 +32,7 @@ func TestPhysicalProviderCallRequiresReservation(t *testing.T) {
 	f := &fakeTransport{}
 	raw := `{"max_output_tokens":16384,"instructions":"production system prompt","input":"hello"}`
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(raw))
-	if _, err := (gateTransport{f}).RoundTrip(req); err != nil {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err != nil {
 		t.Fatal(err)
 	}
 	var row map[string]any
@@ -44,7 +47,7 @@ func TestDeniedReservationNeverSendsRequest(t *testing.T) {
 	resetIO("{\"allow\":false}\n")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{"max_output_tokens":16384}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err == nil || f.calls != 0 {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err == nil || f.calls != 0 {
 		t.Fatal("denied request escaped")
 	}
 }
@@ -52,7 +55,7 @@ func TestUnboundedRequestNeverSends(t *testing.T) {
 	resetIO("")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err == nil || f.calls != 0 {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err == nil || f.calls != 0 {
 		t.Fatal("unbounded request escaped")
 	}
 }
@@ -60,7 +63,7 @@ func TestGeminiProductionCap(t *testing.T) {
 	b := resetIO("{\"allow\":true}\n")
 	f := &fakeTransport{}
 	req, _ := http.NewRequest("POST", "https://generativelanguage.googleapis.com/v1beta/models/test:generateContent", strings.NewReader(`{"generationConfig":{"maxOutputTokens":16384}}`))
-	if _, err := (gateTransport{f}).RoundTrip(req); err != nil || !strings.Contains(b.String(), `"output_tokens":16384`) {
+	if _, err := (gateTransport{f, nil}).RoundTrip(req); err != nil || !strings.Contains(b.String(), `"output_tokens":16384`) {
 		t.Fatal("Gemini reservation missing")
 	}
 }
@@ -82,5 +85,127 @@ func TestTaskScopePreventsTestModification(t *testing.T) {
 	}
 	if g.files([]domain.FileChange{{Path: "service.go", Action: "update", Content: strings.Repeat("x", 21)}}) == nil {
 		t.Fatal("size gate ignored")
+	}
+}
+
+// Test the attribution boundary: errors, unknown usage and multiple physical
+// attempts must never release credit from an aggregate provider result.
+type testProvider struct {
+	meter    *callMeter
+	attempts int
+	usage    agent.Usage
+	err      error
+}
+
+func (p testProvider) Next(ctx context.Context, key, model, text string) (agent.Decision, agent.Usage, error) {
+	for i := 0; i < p.attempts; i++ {
+		r, _ := http.NewRequest("POST", "https://api.openai.com/v1/responses", strings.NewReader(`{"max_output_tokens":100}`))
+		if _, e := (gateTransport{&fakeTransport{}, p.meter}).RoundTrip(r); e != nil {
+			return agent.Decision{}, agent.Usage{}, e
+		}
+	}
+	return agent.Decision{}, p.usage, p.err
+}
+func TestUsageSettlementAttribution(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		attempts int
+		usage    agent.Usage
+		err      error
+		settle   bool
+	}{
+		{"success", 1, agent.Usage{InputTokens: 5, OutputTokens: 3}, nil, true},
+		{"provider-error", 1, agent.Usage{InputTokens: 5, OutputTokens: 3}, errors.New("provider_failed"), false},
+		{"unknown", 1, agent.Usage{}, nil, false},
+		{"retry-aggregate", 2, agent.Usage{InputTokens: 5, OutputTokens: 3}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := resetIO(strings.Repeat("{\"allow\":true}\n", tc.attempts))
+			m := &callMeter{}
+			p := metered{testProvider{m, tc.attempts, tc.usage, tc.err}, m}
+			_, _, _ = p.Next(context.Background(), "key", "model", "request")
+			var row map[string]any
+			scan := bufio.NewScanner(b)
+			ids := map[string]bool{}
+			for scan.Scan() {
+				if e := json.Unmarshal(scan.Bytes(), &row); e != nil {
+					t.Fatal(e)
+				}
+				if row["type"] == "reserve" {
+					id, ok := row["reservation_id"].(string)
+					if !ok || ids[id] {
+						t.Fatal("missing or duplicate physical ID")
+					}
+					ids[id] = true
+				}
+			}
+			if row["type"] != "usage" || row["settle"] != tc.settle || row["usage_id"] != "next-1" {
+				t.Fatalf("unexpected usage: %v", row)
+			}
+			if tc.settle && !ids[row["reservation_id"].(string)] {
+				t.Fatal("unattributed settlement")
+			}
+		})
+	}
+}
+
+func TestDiagnosticsForwardOnlyValidatorClassifications(t *testing.T) {
+	b := resetIO("")
+	w := diagnosticWriter{}
+	_, _ = w.Write([]byte(`{"msg":"arbitrary log containing a credential","reason":"ignore-me"}`))
+	if b.Len() != 0 {
+		t.Fatal("arbitrary log forwarded")
+	}
+	_, _ = w.Write([]byte(`{"msg":"implement_response_rejected","reason":"plan_action_conflict","phase":"plan","has_read":true,"answer":"secret-model-text","request":"secret-request","key":"secret-key"}`))
+	var row map[string]any
+	if e := json.Unmarshal(b.Bytes(), &row); e != nil {
+		t.Fatal(e)
+	}
+	if row["type"] != "core_diagnostic" || row["reason"] != "plan_action_conflict" || row["has_read"] != true {
+		t.Fatal("classification missing")
+	}
+	if strings.Contains(b.String(), "secret-") {
+		t.Fatal("arbitrary fields leaked")
+	}
+}
+
+func TestEditDiagnosticsRetainFailureCountersWithoutSourceOrPaths(t *testing.T) {
+	b := resetIO("")
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_edit_rejected","step":2,"file_index":1,"edit_index":3,"match_count":0,"error_code":"edit_search_not_found","next_edit_format":"line_ranges","path":"secret-path.go","original":"secret-source","request":"secret-request"}`))
+	var row map[string]any
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["event"] != "implement_edit_rejected" || row["phase"] != "edit" || row["error_code"] != "edit_search_not_found" || row["file_index"] != float64(1) || row["edit_index"] != float64(3) || row["match_count"] != float64(0) || row["next_edit_format"] != "line_ranges" {
+		t.Fatalf("diagnostic lost: %v", row)
+	}
+	if strings.Contains(b.String(), "secret-") {
+		t.Fatal("source or path leaked")
+	}
+}
+
+func TestRetryDiagnosticsRetainAttemptAndRejectArbitraryValues(t *testing.T) {
+	b := resetIO("")
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_retry","phase":"edit","step":1,"attempt":5,"retry_count":5,"error_code":"update_requires_edits","answer":"secret-text"}`))
+	var row map[string]any
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["error_code"] != "update_requires_edits" || row["attempt"] != float64(5) || row["retry_count"] != float64(5) {
+		t.Fatalf("retry lost: %v", row)
+	}
+	b = resetIO("")
+	row = nil
+	_, _ = (diagnosticWriter{}).Write([]byte(`{"msg":"implement_edit_rejected","error_code":"secret_value","step":-1,"attempt":1.5,"file_index":1000001,"match_count":"secret-counter","next_edit_format":"secret-format"}`))
+	if err := json.Unmarshal(b.Bytes(), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["error_code"] != "unknown" || strings.Contains(b.String(), "secret") {
+		t.Fatal("unclassified diagnostic leaked")
+	}
+	for _, key := range []string{"step", "attempt", "file_index", "match_count", "next_edit_format"} {
+		if _, ok := row[key]; ok {
+			t.Fatalf("unsafe counter retained: %s", key)
+		}
 	}
 }
